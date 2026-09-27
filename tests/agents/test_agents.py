@@ -239,3 +239,27 @@ def test_agent_and_data_sandboxes_are_separate(monkeypatch):
     monkeypatch.setenv("SANDBOX_POOL", "data")
     empty = CaseResult(case_id="x", verdict="pass", steps=[], balance_delta_cents={}, duration_ms=0)
     assert _run_check_script("print('pwned')", empty).startswith("refused")
+
+
+def test_coordinator_survives_a_model_that_keeps_replanning(monkeypatch):
+    """Seen live on Vultr: the model chose plan_rules every turn. Finished steps must not be valid choices."""
+    monkeypatch.setenv("LLM_OFFLINE", "0")
+    from control_plane import llm as _llm
+    from control_plane.agents import planner as _planner, generator as _generator
+
+    async def stubborn_chat(run_id, agent, messages, **kw):
+        return {"content": "", "tool_calls": [{"id": "1", "function": {"name": "plan_rules", "arguments": "{}"}}]}
+
+    async def offline_plan(run, loop_iter=None):
+        return [p.model_dump() for p in _planner.offline_plan(run.requirements)]
+
+    async def offline_generate(run, loop_iter=None):
+        return _generator.validate_cases(run, [g for p in run.plan for g in _generator.offline_templates(p["rule"])])
+    monkeypatch.setattr(_llm, "chat", stubborn_chat)
+    monkeypatch.setattr(_planner, "plan", offline_plan)
+    monkeypatch.setattr(_generator, "generate", offline_generate)
+    run = db.save_run(Run(id="run-stubborn", title="t", status="planning", created_at="2026-09-27T12:00:00Z", requirements=DEMO["requirements"]))
+    asyncio.run(coordinator.loop(run.id))
+    after = db.get_run(run.id)
+    assert after.status == "awaiting_approval" and after.cases, "must reach the human gate despite the stubborn model"
+    assert sum(e.kind == "tool_call" and e.tool == "plan_rules" for e in db.events(run.id)) == 1

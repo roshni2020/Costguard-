@@ -38,7 +38,8 @@ before go-live. You run a loop: each turn you receive the run state as JSON and 
 the right agent. Workflow: plan -> generate tests -> human approves -> execute in sandboxes -> if regressions: follow-ups
 (up to 3 rounds, until the boundary is found) -> triage report -> file report -> human decides -> publish decision -> finish.
 Rules enforced by the platform: tests never run before human approval; follow-ups must stay inside the human's bounds;
-you cannot decide for the human. In the tool's `instruction` write one short sentence to the agent (US English, USD)."""
+you cannot decide for the human. Never repeat a completed step: pick from `valid_tools_now`.
+In the tool's `instruction` write one short sentence to the agent (US English, USD)."""
 
 _tasks: set[asyncio.Task] = set()
 
@@ -55,8 +56,8 @@ def options(run: Run, meta: dict) -> list[str]:
         if not run.plan:
             return ["plan_rules"]
         if not run.cases:
-            return ["generate_tests", "plan_rules"]
-        return ["request_human_approval", "generate_tests"]
+            return ["generate_tests"]
+        return ["request_human_approval"]
     if s in ("running", "triaging"):
         if not meta.get("executed") or pending_cases(run):
             return ["execute_tests"]
@@ -80,7 +81,8 @@ def observe(run: Run, meta: dict) -> dict:
             "followup_rounds": meta.get("rounds", 0), "boundary": meta.get("boundary"),
             "triage_report": bool(run.triage), "report_filed": bool(meta.get("reported")),
             "decision": run.decision.decision if run.decision else None, "gate_published": bool(meta.get("gate_final")),
-            "iterations_left_in_segment": MAX_ITERS - meta.get("seg_iters", 0)}
+            "iterations_left_in_segment": MAX_ITERS - meta.get("seg_iters", 0),
+            "completed_steps": meta.get("history", [])[-8:], "valid_tools_now": options(run, meta)}
 
 
 def template(tool: str, run: Run, meta: dict) -> str:
@@ -262,6 +264,7 @@ async def loop(run_id: str) -> None:
         set_state(run_id, "coordinator", "acting")
         result, pause = await act(tool, db.get_run(run_id), db.get_meta(run_id), it)
         emit(run_id, "coordinator", "tool_result", result, tool=tool, loop_iter=it)
+        db.set_meta(run_id, history=db.get_meta(run_id).get("history", []) + [tool])
         if receiver != "human":
             say(run_id, receiver, "coordinator", result, it)
         if pause:
