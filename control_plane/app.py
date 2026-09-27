@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from control_plane import analyst, db, llm, metrics, netbird, objstore, sandbox_client
+from control_plane import analyst, db, k8s, llm, metrics, netbird, objstore, sandbox_client
 from control_plane.agents import coordinator, reporter
 from control_plane.events import agent_statuses, emit, now, say, set_state
 from shared import vultr
@@ -255,6 +255,17 @@ class AskIn(BaseModel):
 async def ask(run_id: str, body: AskIn):
     get(run_id)                     # read-only analyst: viewers may ask too
     return await analyst.ask(run_id, body.question)
+
+
+@app.get("/api/sandboxes/live")
+async def sandboxes_live():
+    """Pods on Vultr Kubernetes right now (empty outside kubernetes mode)."""
+    if not k8s.enabled():
+        return {"mode": "not-kubernetes", "pods": []}
+    try:
+        return {"mode": "kubernetes", "pods": await k8s.live_pods()}
+    except Exception as e:
+        raise HTTPException(502, f"Kubernetes API: {e}")
 
 
 @app.get("/api/me")

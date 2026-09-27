@@ -161,3 +161,18 @@ async def health() -> dict:
             "runtime_class": rc_name or None, "runsc": bool(rc is not None and rc.status_code == 200),
             "kvm": None, "active_sandboxes": sum(1 for j in active if not (j.get("status", {}).get("succeeded") or j.get("status", {}).get("failed"))),
             "nodes": node_list, "hostname": f"VKE · {len(node_list)} node(s)", "uname": ", ".join(filter(None, (n["runtime"] for n in node_list[:1])))}
+
+
+async def live_pods() -> list[dict]:
+    """Sandbox pods that exist right now on the cluster (both pools), for the on-screen proof panel."""
+    out = []
+    async with _client(10) as c:
+        for pool in POOLS:
+            r = await c.get(f"/api/v1/namespaces/{ns(pool)}/pods", params={"labelSelector": LABEL})
+            if r.status_code != 200:
+                continue
+            for p in r.json().get("items", []):
+                out.append({"name": p["metadata"]["name"], "pool": pool, "namespace": ns(pool),
+                            "node": p.get("spec", {}).get("nodeName"), "runtime": p.get("spec", {}).get("runtimeClassName"),
+                            "phase": p.get("status", {}).get("phase"), "started": p.get("status", {}).get("startTime")})
+    return out
