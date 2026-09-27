@@ -153,7 +153,8 @@ def test_netbird_roles_gate_mutations(monkeypatch):
 
 def test_netbird_status_parsing(monkeypatch):
     from control_plane import netbird
-    fake = {"netbirdIp": "100.92.1.2/16", "fqdn": "sp-control.netbird.cloud", "peers": {"details": [
+    fake = {"daemonStatus": "Connected", "management": {"connected": True},
+            "netbirdIp": "100.92.1.2/16", "fqdn": "sp-control.netbird.cloud", "peers": {"details": [
         {"fqdn": "sp-sandbox.netbird.cloud", "netbirdIp": "100.92.1.3", "status": "Connected", "connectionType": "P2P", "latency": 1234567}]}}
     monkeypatch.setattr(netbird, "_raw_status", lambda: fake)
     monkeypatch.setattr(netbird, "_cache", (0.0, {}))
@@ -162,6 +163,9 @@ def test_netbird_status_parsing(monkeypatch):
     assert s["ip"] == "100.92.1.2" and s["sandbox_via_netbird"] is True
     assert s["peers"][0] == {"fqdn": "sp-sandbox.netbird.cloud", "ip": "100.92.1.3", "status": "Connected", "connection_type": "P2P", "latency_ms": 1.23}
     assert netbird._ms("850µs") == 0.85 and netbird._ms("2.5ms") == 2.5
+    monkeypatch.setattr(netbird, "_raw_status", lambda: {"daemonStatus": "NeedsLogin", "management": {"connected": False}})
+    monkeypatch.setattr(netbird, "_cache", (0.0, {}))
+    assert netbird.status()["available"] is False, "installed-but-not-logged-in must not count as NetBird"
 
 
 def test_kubernetes_backend_job_lifecycle(monkeypatch, tmp_path):

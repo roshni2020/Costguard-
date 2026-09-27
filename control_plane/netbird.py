@@ -87,8 +87,11 @@ def status() -> dict:
     except ValueError:
         via = host.endswith(".netbird.cloud") or host.endswith(".netbird.selfhosted")
     s = _raw_status()
-    out = {"available": bool(s), "public_url": os.environ.get("NETBIRD_PUBLIC_URL"), "sandbox_via_netbird": via, "peers": []}
-    if s:
+    # installed but not logged in (daemonStatus NeedsLogin) must not show as NetBird-protected
+    connected = bool(s) and ((s.get("management") or {}).get("connected") is True or s.get("daemonStatus") == "Connected")
+    out = {"available": connected, "public_url": os.environ.get("NETBIRD_PUBLIC_URL"), "sandbox_via_netbird": via, "peers": [],
+           "daemon": (s or {}).get("daemonStatus")}
+    if connected:
         details = (s.get("peers") or {}).get("details") or []
         out.update(ip=(s.get("netbirdIp") or "").split("/")[0] or None, fqdn=s.get("fqdn"), peers=[
             {"fqdn": p.get("fqdn"), "ip": (p.get("netbirdIp") or "").split("/")[0] or None, "status": p.get("status"),
