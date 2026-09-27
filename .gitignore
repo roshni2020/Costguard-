@@ -11,3 +11,6 @@ __pycache__/
 vke*.yaml
 *kubeconfig*
 *.kubeconfig
+
+# private speaking notes (kept local only)
+docs/JUDGES_BRIEF.md
