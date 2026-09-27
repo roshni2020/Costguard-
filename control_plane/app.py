@@ -23,6 +23,13 @@ from shared.schemas import (Bounds, Decision, JobRequest, ReplayConfig, RLReport
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 WEB = Path(__file__).resolve().parent.parent / "web"
+
+_env = WEB.parent / ".env"          # local dev convenience; on the VMs systemd loads /etc/switchproof.env
+if _env.exists():
+    for _line in _env.read_text(encoding="utf-8").splitlines():
+        _k, _, _v = _line.partition("=")
+        if _k.strip() and not _k.startswith("#") and _v.strip():
+            os.environ.setdefault(_k.strip(), _v.strip())
 _bg: set[asyncio.Task] = set()
 
 
