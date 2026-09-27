@@ -62,12 +62,13 @@ async function boot() {
       const hashId = decodeURIComponent(location.hash.slice(1)).split('/')[0];
       const runs = await get('/api/runs');
       const run = runs.find((r) => r.id === hashId) || runs.find((r) => r.id === qs.get('run')) || runs[0];
-      const [live, full, evs] = await Promise.all([
+      const [live, full, evs, stripe] = await Promise.all([
         get('/api/sandboxes/live').catch(() => ({ pods: [] })),
         run ? get(`/api/runs/${run.id}`) : null,
         run ? get(`/api/runs/${run.id}/events`) : [],
+        run ? get(`/api/runs/${run.id}/stripe`).catch(() => null) : null,
       ]);
-      render(body, sys, live, full, evs, showPrompt, () => { showPrompt = !showPrompt; tick(); });
+      render(body, sys, live, full, evs, showPrompt, () => { showPrompt = !showPrompt; tick(); }, stripe);
       status.textContent = `refreshed ${new Date().toLocaleTimeString()}`;
     } catch (e) { status.textContent = `offline: ${e.message}`; }
   };
@@ -75,7 +76,7 @@ async function boot() {
   setInterval(tick, 2000);
 }
 
-function render(body, sys, live, run, evs, showPrompt, togglePrompt) {
+function render(body, sys, live, run, evs, showPrompt, togglePrompt, stripe) {
   const vm = sys.control_plane?.vultr || {}, sb = sys.sandbox_host || {}, st = sys.control_plane?.storage || {};
   const secs = [];
   secs.push(h('section', {}, h('h4', { text: 'Vultr VM (control plane)' }),
@@ -117,6 +118,15 @@ function render(body, sys, live, run, evs, showPrompt, togglePrompt) {
     row('Block Storage', h('code', { text: `${st.device || '?'} · ${st.free_gb ?? '?'} GB free ${st.is_block_storage ? '✓' : ''}` })),
     row('Object Storage', h('code', { text: sys.object_storage?.bucket || 'not configured' })),
     ev ? row('Evidence', h('a', { href: ev, target: '_blank', rel: 'noopener', text: 'evidence.json ↗' })) : null));
+  if (stripe) {
+    const rows = stripe.results || [];
+    secs.push(h('section', {}, h('h4', { text: 'Stripe test mode · real payment API, no money moves' }),
+      ...(rows.length ? rows.map((r) => h('div', { class: 'pod' },
+        h('span', {}, h('code', { text: `${r.scenario}: old ${r.old}, new ${r.new}` }), ' ',
+          ...r.stripe_ids.slice(0, 4).map((id) => h('a', { href: `https://dashboard.stripe.com/test/payments/${id}`, target: '_blank', rel: 'noopener', text: ` ${id.slice(0, 14)}… ` }))),
+        h('span', { class: r.verdict === 'pass' ? 'ok' : 'bad', text: r.verdict })))
+        : [h('div', { class: 'muted', text: stripe.enabled ? 'no Stripe checks in this run yet' : 'not enabled: add STRIPE_TEST_KEY (sk_test_…)' })])));
+  }
   body.replaceChildren(...secs);
 }
 

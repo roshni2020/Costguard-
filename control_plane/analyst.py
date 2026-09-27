@@ -42,7 +42,8 @@ def context(run_id: str) -> dict:
                     "bounds": run.bounds.model_dump(), "replay": run.replay.model_dump(), "github": run.github,
                     "decision": run.decision.model_dump() if run.decision else None},
             "metrics": m, "triage_report": run.triage.model_dump() if run.triage else None,
-            "test_cases": cases, "sample_regressions": regressions, "agent_log": log[-160:]}
+            "test_cases": cases, "sample_regressions": regressions, "agent_log": log[-160:],
+            "stripe_test_mode_checks": db.get_meta(run_id).get("stripe", [])}
 
 
 def _offline_answer(ctx: dict) -> str:

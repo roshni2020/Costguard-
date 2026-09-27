@@ -13,7 +13,7 @@ import asyncio
 import json
 import logging
 
-from control_plane import db, llm
+from control_plane import db, llm, stripe_live
 from control_plane.agents import executor, generator, planner, reporter, triage
 from control_plane.events import emit, say, set_state
 from shared.schemas import Run
@@ -189,6 +189,14 @@ async def act(tool: str, run: Run, meta: dict, it: int) -> tuple[str, bool]:
                      f"Replay data source: {src} · {ds_stats.get('rows_scanned', 0):,} rows scanned · {len(replay):,} cases built",
                      dict(ds_stats), loop_iter=it)
                 await executor.execute(rid, replay, it, pool="data")
+            if stripe_live.enabled():
+                dup = next((c for c in approved if c.rule == "reject_duplicate"), None)
+                amount = dup.steps[0].amount_cents if dup else 25000
+                say(rid, "executor", "coordinator", "Also checking the retry against a real payment API: Stripe test mode (no money moves).", it)
+                try:
+                    await stripe_live.run_checks(rid, amount)
+                except Exception as e:
+                    emit(rid, "executor", "warning", f"Stripe test-mode check failed: {str(e)[:200]}", loop_iter=it)
             db.set_meta(rid, executed=True)
         else:
             await executor.execute(rid, pending_cases(run), it)

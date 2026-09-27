@@ -315,3 +315,41 @@ def test_analyst_answers_from_run_data(monkeypatch):
     monkeypatch.setattr(llm, "chat", fake_chat)
     out = asyncio.run(analyst.ask(run["id"], "What went wrong?"))
     assert out["answer"].startswith("Blocked") and "agent_log" in captured["prompt"] and "Question: What went wrong?" in captured["prompt"]
+
+
+def test_stripe_test_mode_checks_catch_the_dropped_idempotency_key(monkeypatch):
+    """Fake Stripe with real idempotency semantics: same key -> same PaymentIntent; no key -> a new one."""
+    import httpx, json as _json, itertools
+    from control_plane import stripe_live
+    monkeypatch.setenv("STRIPE_TEST_KEY", "sk_test_fake")
+    seen, counter, refunded = {}, itertools.count(1), set()
+    declines = {"pm_card_chargeDeclinedInsufficientFunds": "insufficient_funds", "pm_card_chargeDeclinedExpiredCard": "expired_card",
+                "pm_card_chargeDeclinedProcessingError": "processing_error"}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        assert req.headers["authorization"] == "Bearer sk_test_fake"
+        form = dict(x.split("=", 1) for x in req.content.decode().split("&"))
+        idem = req.headers.get("idempotency-key")
+        if idem and idem in seen:
+            return httpx.Response(200, json=seen[idem])
+        if req.url.path.endswith("/refunds"):
+            pi = form["payment_intent"]
+            if pi in refunded:
+                return httpx.Response(400, json={"error": {"code": "charge_already_refunded"}})
+            refunded.add(pi)
+            return httpx.Response(200, json={"id": f"re_{next(counter)}", "status": "succeeded"})
+        pid = f"pi_{next(counter)}"
+        if form["payment_method"] in declines:
+            return httpx.Response(402, json={"error": {"code": "card_declined", "decline_code": declines[form["payment_method"]], "payment_intent": {"id": pid}}})
+        body = {"id": pid, "status": "succeeded"}
+        if idem:
+            seen[idem] = body
+        return httpx.Response(200, json=body)
+    monkeypatch.setattr(stripe_live, "_transport", httpx.MockTransport(handler))
+    run = db.save_run(Run(id="run-stripe", title="t", status="running", created_at="2026-09-27T12:00:00Z", requirements=["x"]))
+    rows = asyncio.run(stripe_live.run_checks(run.id))
+    by = {r["scenario"].split(" ")[0]: r for r in rows}
+    assert by["Duplicate"]["old"] == "1 charge(s)" and by["Duplicate"]["new"] == "2 charge(s)" and by["Duplicate"]["verdict"] == "regression"
+    assert all(r["verdict"] == "pass" for r in rows if not r["scenario"].startswith("Duplicate")), rows
+    monkeypatch.setenv("STRIPE_TEST_KEY", "sk_live_nope")
+    assert stripe_live.enabled() is False, "live keys must be refused"

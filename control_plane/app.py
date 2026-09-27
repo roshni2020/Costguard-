@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from control_plane import analyst, db, k8s, llm, metrics, netbird, objstore, sandbox_client
+from control_plane import analyst, db, k8s, llm, metrics, netbird, objstore, sandbox_client, stripe_live
 from control_plane.agents import coordinator, reporter
 from control_plane.events import agent_statuses, emit, now, say, set_state
 from shared import vultr
@@ -255,6 +255,20 @@ class AskIn(BaseModel):
 async def ask(run_id: str, body: AskIn):
     get(run_id)                     # read-only analyst: viewers may ask too
     return await analyst.ask(run_id, body.question)
+
+
+@app.get("/api/runs/{run_id}/stripe")
+def stripe_results(run_id: str):
+    get(run_id)
+    return {"enabled": stripe_live.enabled(), "results": db.get_meta(run_id).get("stripe", [])}
+
+
+@app.post("/api/runs/{run_id}/stripe", dependencies=[Depends(netbird.require_tester)])
+async def stripe_run(run_id: str):
+    get(run_id)
+    if not stripe_live.enabled():
+        raise HTTPException(503, "set STRIPE_TEST_KEY (an sk_test_ key) to enable live Stripe test-mode checks")
+    return {"enabled": True, "results": await stripe_live.run_checks(run_id)}
 
 
 @app.get("/api/sandboxes/live")
