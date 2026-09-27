@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SwitchProof · Live proof from Vultr</title>
+  <link rel="icon" href="data:,">
+  <style>
+    html { font-size: 18px; } @media (min-width: 1600px) { html { font-size: 20px; } }
+    body { margin: 0; background: #060a12; color: #e8eef7; font: 1rem/1.5 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
+    .bar { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; padding: .9rem 1.4rem; border-bottom: 1px solid #1b2842; background: #0b1220; }
+    .bar b { font-size: 1.15rem; } .bar a { color: #5ea2ff; margin-left: auto; }
+    .lead { max-width: 1200px; margin: 1.4rem auto .4rem; padding: 0 1.4rem; color: #b4c2d6; }
+    .lead h1 { color: #e8eef7; font-size: 1.9rem; margin: 0 0 .3rem; }
+  </style>
+</head>
+<body data-proof="page">
+  <div class="bar"><b>SwitchProof</b><span>Live proof from the Vultr deployment</span><a href="/">← Back to the app</a></div>
+  <div class="lead">
+    <h1>Is it really running on Vultr?</h1>
+    <p>Every value below is read live from the deployment every 2 seconds: the Vultr VM's identity, the sandboxes on Vultr Kubernetes, the last Vultr Serverless Inference call and its real reply, and where the data lives. Compare the instance ID and node names with the Vultr console.</p>
+  </div>
+  <main id="proof-page"></main>
+  <script type="module" src="proof.js?v=4"></script>
+</body>
+</html>

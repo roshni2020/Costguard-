@@ -33,7 +33,12 @@ const CSS = `
 #proof button{background:#16233d;color:#e8eef7;border:1px solid #2a3b5e;border-radius:7px;padding:.2rem .55rem;font:inherit;font-size:.78rem;cursor:pointer}
 #proof a{color:#5ea2ff}
 #proof.min section{display:none}
-@media (min-width:1600px){#proof{font-size:15px;width:520px}}`;
+@media (min-width:1600px){#proof{font-size:15px;width:520px}}
+#proof.full{position:static;width:auto;max-width:1200px;max-height:none;margin:1rem auto 3rem;font-size:1rem;backdrop-filter:none;box-shadow:none}
+#proof.full header{cursor:default;position:static}
+#proof.full .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(520px,1fr))}
+#proof.full .pod,#proof.full code{font-size:.85rem}#proof.full pre{max-height:360px;font-size:.82rem}
+#proof .open{margin-left:.6rem;font-size:.78rem}`;
 
 async function boot() {
   let sys;
@@ -41,13 +46,16 @@ async function boot() {
   document.head.append(h('style', { text: CSS }));
   const body = h('div');
   const status = h('span', { class: 'muted', text: 'connecting…' });
-  const panel = h('aside', { id: 'proof', 'aria-label': 'Live proof from the Vultr deployment' },
-    h('header', { onclick: () => panel.classList.toggle('min'), title: 'Collapse or expand' },
-      h('span', { class: 'dot', 'aria-hidden': 'true' }), h('b', { text: 'LIVE PROOF · VULTR' }), status),
+  const full = document.body.dataset.proof === 'page';
+  if (full) body.className = 'grid';
+  const open = full ? null : h('a', { class: 'open', href: 'proof.html', onclick: (e) => e.stopPropagation(), text: 'Open full page ↗' });
+  const panel = h('aside', { id: 'proof', class: full ? 'full' : '', 'aria-label': 'Live proof from the Vultr deployment' },
+    h('header', full ? {} : { onclick: () => panel.classList.toggle('min'), title: 'Collapse or expand' },
+      h('span', { class: 'dot', 'aria-hidden': 'true' }), h('b', { text: 'LIVE PROOF · VULTR' }), open, status),
     body);
-  if (innerWidth < 1500) panel.classList.add('min');   // small windows: start collapsed so it never hides the page
-  document.body.append(panel);
-  let showPrompt = false, last = 0;
+  if (!full && innerWidth < 1500) panel.classList.add('min');   // small windows: start collapsed so it never hides the page
+  (full ? document.getElementById('proof-page') : document.body).append(panel);
+  let showPrompt = full, last = 0;
   const tick = async () => {
     try {
       if (Date.now() - last > 15000) { sys = await get('/api/system'); last = Date.now(); }
