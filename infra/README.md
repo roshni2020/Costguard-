@@ -21,7 +21,7 @@ This is the step-by-step guide to putting SwitchProof on Vultr: what to create i
 
 | Vultr product | What it does here | Rough cost |
 |---|---|---|
-| Compute (VX1 `vx1-g-2c-8g`) | `sp-control`: control plane, agents, UI | $0.06/h |
+| Compute (VX1 `vx1-g-2c-8g-120s`) | `sp-control`: control plane, agents, UI | $0.076/h |
 | Kubernetes Engine | Sandbox cluster: `agent-pool` + `data-pool`, 1 VX1 node each (the control plane is included) | 2 nodes × $0.06/h |
 | Serverless Inference | The LLM behind every agent (`laguna-s-2.1`, the cheapest model with tool calling) | ~$0.18 / 1M output tokens |
 | Container Registry | Stores the sandbox runner image | small |
@@ -39,7 +39,7 @@ Put everything in the **same region** (for example Atlanta).
 
 **A1. VPC.** Network → VPC Networks → *Add VPC Network*. Name it `sp-vpc`.
 
-**A2. Control-plane VM.** Compute → Deploy → **Dedicated CPU → VX1 → `vx1-g-2c-8g`**, Ubuntu 24.04, attach **`sp-vpc`**, add your SSH key, hostname `sp-control`. Automatic backups can stay off. Note its **public IP**.
+**A2. Control-plane VM.** Compute → Deploy → **Dedicated CPU → VX1 → `vx1-g-2c-8g-120s`** (it has a built-in 120 GB disk; the plain `vx1-g-2c-8g` needs a separate bootable volume). Under Boot Configuration choose **Local Storage**, then image **Ubuntu 24.04 LTS x64**. Attach **`sp-vpc`** (Additional Features → VPC Network), add your SSH key, hostname `sp-control`. Automatic backups and DDoS protection can stay off. If it shows *Stopped* after creation, click ••• → Start. Note its **public IP**.
 
 **A3. Firewall.** Network → Firewall → *Add Firewall Group* `sp-fw`:
 - SSH `22/tcp` from **your IP only** (`x.x.x.x/32`).
