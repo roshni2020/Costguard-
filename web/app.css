@@ -29,8 +29,10 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; }
+html { font-size: 17.5px; }                      /* readable on a projector / screen share; everything else is rem */
+@media (max-width: 600px) { html { font-size: 16px; } }
 body {
-  font: 14.5px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font: 1rem/1.55 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   color: var(--ink); min-height: 100vh;
   background: radial-gradient(1200px 500px at 70% -10%, rgba(0, 123, 252, .10), transparent 60%), var(--bg);
   background-attachment: fixed;
@@ -73,7 +75,7 @@ pre { background: var(--bg2); border: 1px solid var(--line); padding: .6rem .75r
 
 
 /* ---------- section nav (sticky under the top bar) ---------- */
-:root { --top-h: 52px; }
+:root { --top-h: 60px; }
 .secnav { position: sticky; top: var(--top-h); z-index: 9; display: flex; align-items: center; gap: .2rem; padding: .35rem 1rem; overflow-x: auto; scrollbar-width: none;
   background: color-mix(in srgb, var(--bg) 90%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
 .secnav::-webkit-scrollbar { display: none; }
@@ -121,7 +123,7 @@ pre { background: var(--bg2); border: 1px solid var(--line); padding: .6rem .75r
 .hero3d.flat[data-tone="bad"] .hero-status { color: var(--bad); text-shadow: none; }
 
 /* ---------- sections ---------- */
-main { max-width: 1280px; margin: 0 auto; padding: 1rem 1.3rem 4rem; min-width: 0; }
+main { max-width: 1440px; margin: 0 auto; padding: 1rem 1.3rem 4rem; min-width: 0; }
 main:focus { outline: none; }
 .sec { padding-top: .6rem; }
 .page.enter { animation: pagein .18s ease-out; }
