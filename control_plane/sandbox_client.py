@@ -1,6 +1,7 @@
 """Client for the sandbox host (VM #2). Fake mode (SANDBOX_HOST_URL unset) runs cases in-process - DEV ONLY."""
 from __future__ import annotations
 import asyncio
+import itertools
 import json
 import logging
 import os
@@ -18,8 +19,16 @@ from shared.schemas import BatchRequest, BatchResult, JobRequest, JobResult, Pro
 log = logging.getLogger("switchproof.sandbox")
 
 
+def urls() -> list[str]:
+    """SANDBOX_HOST_URL may list several sandbox VMs (comma-separated): batches are spread across them."""
+    return [u.strip().rstrip("/") for u in os.environ.get("SANDBOX_HOST_URL", "").split(",") if u.strip()]
+
+
 def url() -> str | None:
-    return os.environ.get("SANDBOX_HOST_URL") or None
+    return (urls() or [None])[0]
+
+
+_next = itertools.count()
 
 
 _warned = False
@@ -35,12 +44,12 @@ def fake() -> bool:
     return False
 
 
-async def _call(method: str, path: str, body: str | None = None, timeout: float = 180) -> dict:
+async def _call(method: str, path: str, body: str | None = None, timeout: float = 180, host: str | None = None) -> dict:
     headers = {"X-SwitchProof-Token": os.environ.get("SANDBOX_TOKEN", ""), "Content-Type": "application/json"}
     for attempt in range(3):   # retry on connect errors only
         try:
             async with httpx.AsyncClient(timeout=timeout) as c:
-                r = await c.request(method, url() + path, headers=headers, content=body)
+                r = await c.request(method, (host or url()) + path, headers=headers, content=body)
             if r.status_code >= 400:
                 raise RuntimeError(f"sandbox host {path} -> HTTP {r.status_code}: {r.text[:500]}")
             return r.json()
@@ -67,7 +76,9 @@ def _fake_batch(req: BatchRequest) -> BatchResult:
 async def run_batch(req: BatchRequest) -> BatchResult:
     if fake():
         return await asyncio.to_thread(_fake_batch, req)
-    return BatchResult.model_validate(await _call("POST", "/batch", req.model_dump_json(), timeout=req.timeout_s + 60))
+    hosts = urls()
+    host = hosts[next(_next) % len(hosts)]              # round-robin: scale out by adding sandbox VMs
+    return BatchResult.model_validate(await _call("POST", "/batch", req.model_dump_json(), timeout=req.timeout_s + 60, host=host))
 
 
 def _fake_job(req: JobRequest) -> JobResult:
@@ -97,7 +108,10 @@ async def health() -> dict:
         return {"mode": "fake", "kvm": False, "runsc": False, "active_sandboxes": 0,
                 "hostname": socket.gethostname(), "uname": " ".join(x for x in platform.uname() if x),
                 "warning": "SANDBOX_HOST_URL unset - tests run in-process (development only)"}
-    try:
-        return await _call("GET", "/health", timeout=10)
-    except Exception as e:
-        return {"error": str(e)}
+    async def one(h):
+        try:
+            return {**await _call("GET", "/health", timeout=10, host=h), "url": h}
+        except Exception as e:
+            return {"error": str(e), "url": h}
+    hs = await asyncio.gather(*(one(h) for h in urls()))
+    return {**hs[0], "hosts": hs} if len(hs) > 1 else hs[0]

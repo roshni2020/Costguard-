@@ -9,7 +9,7 @@ from control_plane.events import emit
 from shared.schemas import BatchRequest, CaseResult, Counts, TestCase
 
 BATCH = 250
-PARALLEL = 4
+PER_HOST = 4        # each sandbox VM runs up to 4 sandboxes at once (sandbox_host SEM)
 
 
 def new_bugs() -> list[str]:
@@ -28,9 +28,10 @@ async def execute(run_id: str, cases: list[TestCase], loop_iter: int | None = No
     """Run `cases` in sandboxes. Caller guarantees they are human-approved (or triage follow-ups inside bounds)."""
     db.save_cases(cases)
     batches = [cases[i:i + BATCH] for i in range(0, len(cases), BATCH)]
+    parallel = PER_HOST * max(1, len(sandbox_client.urls()))
     emit(run_id, "executor", "info", f"Dispatching {len(cases):,} cases in {len(batches)} sandbox batch(es), "
-         f"{PARALLEL} in parallel", loop_iter=loop_iter)
-    sem = asyncio.Semaphore(PARALLEL)
+         f"{parallel} in parallel across {max(1, len(sandbox_client.urls()))} sandbox VM(s)", loop_iter=loop_iter)
+    sem = asyncio.Semaphore(parallel)
     all_results: list[CaseResult] = []
     first_regression = [db.verdict_counts(run_id).get("regression", 0) > 0]
 
