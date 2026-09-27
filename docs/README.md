@@ -80,7 +80,10 @@ A Vultr firewall group allows SSH from one IP only. No app port is public. The s
 
 Setup: [infra/README.md](infra/README.md).
 
-## How NetBird is used
+## NetBird integration (built, not yet enabled on the deployment)
+
+> Honest status: the code, scripts and tests for everything below are in this repo, but the recorded Vultr deployment does not have NetBird switched on yet. Today the live app is reached over an SSH tunnel and the public demo is the read-only recording above. Enabling it: [infra/netbird.md](infra/netbird.md).
+
 
 - **Zero-port access**: the public URL is served by the NetBird reverse proxy over WireGuard, with no inbound app ports on the Vultr VM. The Infrastructure page shows the NetBird peers (for example the admin laptop, P2P) with path and latency.
 - **Identity and roles**: NetBird SSO identifies the user. Members of the `testers` group can approve, run and decide. Everyone else gets a read-only view, and the server records the authenticated identity on the decision.
