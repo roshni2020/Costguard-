@@ -6,7 +6,7 @@ Before you start: run `bash infra/preflight.sh` on `sp-control` (all PASS). Open
 
 | Time | Say | Click |
 | --- | --- | --- |
-| 0:00 | "In 2018 TSB's platform migration went wrong. The FCA and PRA fined them £48.65m, on top of £32.7m paid to customers. Every bank that swaps its payment switch runs that risk. SwitchProof is a team of AI agents that proves the new switch behaves like the old one before go-live." | The app opens on the **Overview** page: the 3D scene with the card terminal, the human gate, OLD A · OLD B · NEW towers and the two sandbox pools. Status line: *Waiting for rules*. Point at the top bar: **LIVE on Vultr · <region> · 1 VM + VKE**, the **NetBird** shield, the **Vultr · laguna-s-2.1** model chip and your **NetBird SSO** identity. |
+| 0:00 | "In 2018 TSB's platform migration went wrong. The FCA and PRA fined them £48.65m, on top of £32.7m paid to customers. Every bank that swaps its payment switch runs that risk. SwitchProof is a team of AI agents that proves the new switch behaves like the old one before go-live." | The app opens on the **Overview** page: the 3D scene with the card terminal, the human gate, OLD A · OLD B · NEW towers and the two sandbox pools. Status line: *Waiting for rules*. Point at the top bar: **LIVE on Vultr · <region> · 1 VM + VKE**, the **NetBird** shield, the **Vultr · glm-5.3** model chip and your **NetBird SSO** identity. |
 | 0:20 | "The tester writes the rules in plain English, like approve with funds, decline for insufficient funds, reject a duplicate within 60 seconds, reverse and restore. She also sets bounds for the agents." | Click **Rules** in the top nav: four rule cards, bound pills, the *Replay* toggle. Click **Generate tests with Vultr AI**. The app opens the **Approve** page. |
 | 0:40 | "The coordinator runs a tool-calling loop on Vultr Serverless Inference. The planner splits the rules into states, and the generator writes ISO 8583 test cases." | Stay on **Approve** while the agent log fills. Optional: click **Agents** to show the hub diagram with the active spoke, then come back. |
 | 1:00 | "Nothing runs until she approves. Here's the duplicate test: $250 on card ending 1111, then the same purchase at t+5 s, expect 94 Duplicate transmission." | Point at the progress ring, the lock panel and the padlock in the top nav (*gate locked*); Run, Evidence and Decision show a small lock too. Optional: on **Overview** the status says *10 tests await your approval*, the button reads *Review 10 tests →*, and the 3D gate stands closed between the terminal and the towers. Click **Edit** on one case, change the amount, **Save**. Click **Approve all**: the padlock opens and the Run button glows. Click **Run approved tests in sandboxes**: the app opens the **Run** page, whose 3D banner shows the gate swinging open. |
@@ -29,6 +29,12 @@ If there's time: **RL explorer** → **Train RL explorer on CPU**. "Trained insi
 | 0:45 | **Evidence**: tower replay 94/94/00, balance bars "Customer overcharged $250.00", boundary chart, GitHub issue *pending*. |
 | 0:55 | **Decision**: click *Block migration*. The BLOCKED barrier slams down in the banner; stamp and GitHub gate *failure*. |
 
+## Where the rules come from
+
+The **Rules** page is filled in by the tester, in plain English, one requirement per line. The four defaults are the demo inputs from the project brief; edit, delete or add any. The collapsed *Legacy rules* text describes how the old switch behaves, and the agents use it for expected answers; *Limits* cap amounts and message types for every agent-written test. In a live demo, add one rule suggested by a judge (e.g. *"Decline a purchase on an expired card"*) before clicking **Generate tests with Vultr AI**.
+
+Models: **glm-5.3** for the coordinator, planner and triage (reasoning), **deepseek-v4.1-flash** for the test generator (fast structured output). The Agents page shows each agent's model.
+
 ## Fallback
 
 - **Backend or NetBird down**: open `https://<owner>.github.io/<repo>/?snapshot=export.json` (published with `infra/publish_snapshot.sh <run_id>`). The banner reads *Recorded run from our Vultr deployment — live app is behind NetBird*. Every step and tab works read-only.
@@ -38,7 +44,7 @@ If there's time: **RL explorer** → **Train RL explorer on CPU**. "Trained insi
 
 ## Judge questions
 
-**"Show me the instance."** Open the Vultr console → Compute: `sp-control` (VX1, on `sp-vpc`), then Kubernetes: the `sp-sandboxes` cluster and its node pool. In the app, the **Infrastructure** page shows each VM's Vultr instance id, region, plan and IPs, read from the instance metadata. On `sp-control`: `systemctl status switchproof-control`. During a run, `kubectl get jobs -n switchproof-sandbox -w` shows one Job per batch appearing and being deleted, each with `runtimeClassName: gvisor`.
+**"Show me the instance."** Open the Vultr console → Compute: `sp-control` (VX1, on `sp-vpc`), then Kubernetes: the `sp-sandboxes` cluster and its node pool. In the app, the **Infrastructure** page shows each VM's Vultr instance id, region, plan and IPs, read from the instance metadata. On `sp-control`: `systemctl status switchproof-control`. During a run, `kubectl get jobs -A -l app.kubernetes.io/part-of=switchproof-sandbox -w` shows one Job per batch (`sp-agent-…` in `switchproof-agent`, `sp-data-…` in `switchproof-data`) appearing and being deleted, each with `runtimeClassName: gvisor`.
 
 **"Is the model Vultr's?"** Yes. `LLM_BASE_URL=https://api.vultrinference.com/v1` is set in `/etc/switchproof.env` on `sp-control`. Every LLM call on the Agents page shows *Vultr · <model>* with tokens and latency, and expands to the exact prompt and reply. The Vultr console → Serverless Inference usage shows the same calls.
 
