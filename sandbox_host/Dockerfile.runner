@@ -1,0 +1,11 @@
+# Throwaway sandbox image. Run ONLY with: --runtime=runsc --network=none --read-only (see sandbox_host/app.py)
+FROM python:3.11-slim
+RUN pip install --no-cache-dir "pyiso8583>=3.0" "pydantic>=2.6" \
+ && useradd --create-home --uid 10001 runner
+WORKDIR /app
+COPY shared/ shared/
+COPY switchcore/ switchcore/
+COPY rl/ rl/
+ENV SWITCHPROOF_IN_SANDBOX=1 PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+USER runner
+CMD ["python", "-m", "switchcore.runner"]
