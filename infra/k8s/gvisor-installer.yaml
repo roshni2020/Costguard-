@@ -1,0 +1,64 @@
+# Installs gVisor (runsc + containerd shim) on every VKE node and registers the `runsc` containerd runtime.
+# VKE does not ship gVisor; this is the standard containerd integration (gvisor.dev/docs/user_guide/containerd).
+# Idempotent: re-running changes nothing on nodes that are already set up. Remove with: kubectl delete ns gvisor-system
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gvisor-system
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: gvisor-installer
+  namespace: gvisor-system
+spec:
+  selector:
+    matchLabels: {app: gvisor-installer}
+  template:
+    metadata:
+      labels: {app: gvisor-installer}
+    spec:
+      hostPID: true                  # needed to restart containerd on the node via nsenter
+      tolerations: [{operator: Exists}]
+      containers:
+        - name: install
+          image: alpine:3.20
+          securityContext: {privileged: true}
+          volumeMounts: [{name: host, mountPath: /host}]
+          readinessProbe:
+            exec: {command: [test, -f, /tmp/ready]}
+            periodSeconds: 5
+          command: [/bin/sh, -c]
+          args:
+            - |
+              set -eu
+              apk add --no-cache util-linux coreutils >/dev/null
+              ARCH=$(uname -m)
+              URL=https://storage.googleapis.com/gvisor/releases/release/latest/$ARCH
+              if [ ! -x /host/usr/local/bin/runsc ] || [ ! -x /host/usr/local/bin/containerd-shim-runsc-v1 ]; then
+                cd /tmp
+                for f in runsc containerd-shim-runsc-v1; do wget -q "$URL/$f" "$URL/$f.sha512"; done
+                sha512sum -c runsc.sha512 containerd-shim-runsc-v1.sha512
+                install -m 755 runsc containerd-shim-runsc-v1 /host/usr/local/bin/
+                echo "installed gVisor $(/host/usr/local/bin/runsc --version | head -1)"
+              fi
+              CFG=/host/etc/containerd/config.toml
+              if [ ! -s "$CFG" ]; then
+                mkdir -p /host/etc/containerd
+                nsenter -t 1 -m -- containerd config default > "$CFG"
+              fi
+              if ! grep -q 'runtimes.runsc' "$CFG"; then
+                if grep -q '^version *= *3' "$CFG"; then
+                  printf '\n[plugins."io.containerd.cri.v1.runtime".containerd.runtimes.runsc]\n  runtime_type = "io.containerd.runsc.v1"\n' >> "$CFG"
+                else
+                  printf '\n[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc]\n  runtime_type = "io.containerd.runsc.v1"\n' >> "$CFG"
+                fi
+                echo "registered runsc in containerd, restarting containerd"
+                nsenter -t 1 -m -u -i -n -p -- systemctl restart containerd
+              fi
+              touch /tmp/ready
+              echo "gvisor ready on $(cat /host/etc/hostname)"
+              sleep infinity
+      volumes:
+        - name: host
+          hostPath: {path: /}

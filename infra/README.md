@@ -1,93 +1,143 @@
 # Deploying SwitchProof on Vultr
 
-Two VMs on one private VPC. Nothing listens on a public app port.
+This is the step-by-step guide to putting SwitchProof on Vultr: what to create in the Vultr console, then which script to run for each piece. No Docker runs on any VM. The test sandboxes run as Kubernetes Jobs on **Vultr Kubernetes Engine**.
 
-| VM | Plan | Runs | Listens on |
-| --- | --- | --- | --- |
-| `sp-control` | VX1, Ubuntu 24.04 | FastAPI control plane, agents, web UI | `127.0.0.1:8000` (or its NetBird IP) |
-| `sp-sandbox` | VX1, Ubuntu 24.04 | Sandbox host API + Docker + gVisor `runsc` | `<VPC IP>:9000` only |
-
-The LLM is **Vultr Serverless Inference** (`https://api.vultrinference.com/v1`), called only from `sp-control`.
-
-## 1. Vultr console
-
-1. **VPC**: Network → VPC Networks → *Add VPC* in your region (e.g. `sp-vpc`, `10.10.0.0/24`).
-2. **Instances**: Deploy two **VX1** instances, Ubuntu 24.04, same region, both attached to `sp-vpc`. Name them `sp-control` and `sp-sandbox`. Add your SSH key.
-3. Note each instance's **VPC IP** (instance → *Settings → IPv4* / VPC section). Below: `CONTROL_IP` and `SANDBOX_IP`.
-4. **Firewall group** `sp-fw` (Network → Firewall), attach to both instances:
-   - SSH `22/tcp` from **Roshni's IP only** (`x.x.x.x/32`).
-   - NetBird: nothing inbound is required (peers connect outbound and use hole punching or relays). Optionally allow `51820/udp` for direct WireGuard paths, per the NetBird docs.
-   - **No** rule for 8000 or 9000. The app is never exposed publicly.
-5. Vultr firewall groups filter the public interface. The VPC side of `sp-sandbox` is locked by `ufw`, which the setup script configures: port `9000/tcp` is allowed **only from `CONTROL_IP`** (and from the NetBird interface, which the NetBird policy narrows further).
-6. **Serverless Inference**: Products → Serverless Inference → create a subscription and copy the **API key** (not the subscription ID). We use `laguna-s-2.1`, the cheapest model on the list with tool calling; that value is `LLM_MODEL`.
-7. **Object Storage** (evidence archive + public demo page): Storage → Object Storage → *Add*, same region. Open it and copy the **hostname** (e.g. `ewr1.vultrobjects.com`), **access key** and **secret key**. The app creates its bucket itself (default name `switchproof-<something-unique>`, set via `VULTR_S3_BUCKET`).
-8. **Block Storage** (SQLite + full TabFormer dataset on `sp-control`): Storage → Block Storage → *Add* ~40 GB in the same region → attach to `sp-control`. Then run `sudo bash infra/setup_block_storage.sh` on it (step 3b).
-
-Cost at the time of writing (check the console): 2 × VX1 2c/8GB ≈ $0.12/hour total, Object Storage and Block Storage a few dollars a month (billed hourly), inference ≈ $0.18 per 1M output tokens. Destroy everything after judging.
-
-## 2. Sandbox host (`sp-sandbox`), first
-
-```bash
-ssh root@<sp-sandbox public IP>
-git clone <REPO_URL> /opt/switchproof && cd /opt/switchproof
-sudo REPO_URL=<REPO_URL> CONTROL_IP=<CONTROL_IP> bash infra/setup_sandbox_host.sh
+```
+ Judges ──HTTPS──▶ NetBird reverse proxy (SSO for testers, PIN for judges)   ← no open ports on Vultr
+                          │ WireGuard
+                          ▼
+   sp-control  (Vultr Compute VX1, Ubuntu 24.04)
+     FastAPI control plane + agents + web UI      ──▶ Vultr Serverless Inference (laguna-s-2.1)
+     SQLite + TabFormer on Vultr Block Storage    ──▶ Vultr Object Storage (evidence bundles, public demo page)
+     namespace-scoped token                        ──▶ GitHub (issue + release gate)
+                          │ Kubernetes API (TLS)
+                          ▼
+   Vultr Kubernetes Engine (node pool: 2 × VX1)
+     namespace switchproof-sandbox: 1 Job per test batch
+     gVisor RuntimeClass · no network · read-only root · no credentials · deleted after the batch
+     image pulled from Vultr Container Registry
 ```
 
-It installs Docker, adds the service user to `kvm`, checks `/dev/kvm`, installs gVisor `runsc` from the official apt repo, runs `runsc install`, restarts Docker, runs a smoke test inside gVisor, builds `switchproof-runner:latest`, creates `/etc/switchproof.env` (**prints a generated `SANDBOX_TOKEN`: copy it**), locks port 9000 with ufw and starts `switchproof-sandbox.service` bound to the VPC IP.
+| Vultr product | What it does here | Rough cost |
+|---|---|---|
+| Compute (VX1 `vx1-g-2c-8g`) | `sp-control`: control plane, agents, UI | $0.06/h |
+| Kubernetes Engine | Sandbox cluster; nodes are VX1 (the control plane is included) | 2 nodes × $0.06/h |
+| Serverless Inference | The LLM behind every agent (`laguna-s-2.1`, the cheapest model with tool calling) | ~$0.18 / 1M output tokens |
+| Container Registry | Stores the sandbox runner image | small |
+| Object Storage | Evidence bundle per run; hosts the public demo page | a few $/month, hourly |
+| Block Storage (40 GB) | Database + the 2.3 GB IBM TabFormer dataset on `sp-control` | ~$1/month, hourly |
+| VPC | Private network for the VM and the cluster nodes | free |
 
-If `/dev/kvm` is missing (no nested virtualization on the plan), gVisor falls back to its `systrap` platform. Isolation still holds, and the UI shows `KVM ✗`.
+Weekend total: roughly $15–25. **Destroy everything after judging.**
 
-## 3. Control plane (`sp-control`)
+---
+
+## Part A: create things in the Vultr console
+
+Put everything in the **same region** (for example Atlanta).
+
+**A1. VPC.** Network → VPC Networks → *Add VPC Network*. Name it `sp-vpc`.
+
+**A2. Control-plane VM.** Compute → Deploy → **Dedicated CPU → VX1 → `vx1-g-2c-8g`**, Ubuntu 24.04, attach **`sp-vpc`**, add your SSH key, hostname `sp-control`. Automatic backups can stay off. Note its **public IP**.
+
+**A3. Firewall.** Network → Firewall → *Add Firewall Group* `sp-fw`:
+- SSH `22/tcp` from **your IP only** (`x.x.x.x/32`).
+- **Nothing else.** No 80, 443, 8000. NetBird needs no inbound rule.
+- Attach it to `sp-control` (Linked Instances tab).
+
+**A4. Kubernetes cluster.** Kubernetes → *Add Cluster*: name `sp-sandboxes`, latest version, same region, VPC `sp-vpc`. One node pool: **2 × VX1 `vx1-g-2c-8g`** (turn on auto-scaler max 4 if offered). When it's *Running*, click **Download Configuration** to get the kubeconfig file (`vke-….yaml`).
+
+**A5. Container Registry.** Container Registry → *Add*, name `switchproof`, same region. Note the **registry URL** (like `sjc.vultrcr.com/switchproof`), **username** and **password/API key**.
+
+**A6. Object Storage.** Storage → Object Storage → *Add*, same region (or the nearest offered). Copy the **hostname**, **access key** and **secret key**. The app creates its own bucket.
+
+**A7. Block Storage.** Storage → Block Storage → *Add*, **40 GB**, same region → *Attach* to `sp-control`.
+
+**A8. Serverless Inference.** Products → Serverless → Inference → *Add Serverless Inference* → give it a label, acknowledge the charges. Open it and copy the **API Key**. This is *not* the subscription ID at the top of the page.
+
+**A9. GitHub.** Code lives at your repo (`https://github.com/roshni2020/Costguard-`). Settings → Secrets and variables → Actions → add:
+- `VCR_REGISTRY` = registry URL from A5
+- `VCR_USERNAME`, `VCR_PASSWORD` = its credentials
+
+Then Actions → **runner-image** → *Run workflow*. It builds the sandbox image in GitHub's CI and pushes it to your Vultr registry (`<registry>/switchproof-runner:latest`).
+
+Optional, for the GitHub issue + release gate: a fine-grained token with *Issues* and *Commit statuses* on the repo.
+
+**A10. NetBird.** Create a free account at app.netbird.io. Follow [netbird.md](netbird.md) §1 (groups, setup key, *Enable Peer Expose*).
+
+---
+
+## Part B: set up the software (SSH into `sp-control`)
 
 ```bash
 ssh root@<sp-control public IP>
-git clone <REPO_URL> /opt/switchproof && cd /opt/switchproof
-sudo REPO_URL=<REPO_URL> \
-  VULTR_INFERENCE_API_KEY=<key> LLM_MODEL=<model id> \
-  SANDBOX_HOST_URL=http://<SANDBOX_IP>:9000 SANDBOX_TOKEN=<token from step 2> \
-  GITHUB_TOKEN=<fine-grained token: issues + commit statuses> GITHUB_REPO=<owner>/<repo> \
-  NETBIRD_SETUP_KEY=<key> \
+git clone https://github.com/roshni2020/Costguard-.git /opt/switchproof && cd /opt/switchproof
+```
+
+**B1. Control plane** (Python, service user, systemd):
+
+```bash
+sudo REPO_URL=https://github.com/roshni2020/Costguard-.git \
+  VULTR_INFERENCE_API_KEY=<A8 key> LLM_MODEL=laguna-s-2.1 \
+  VULTR_S3_ENDPOINT=https://<A6 hostname> VULTR_S3_ACCESS_KEY=<A6> VULTR_S3_SECRET_KEY=<A6> VULTR_S3_BUCKET=switchproof-roshni \
+  GITHUB_TOKEN=<optional> GITHUB_REPO=roshni2020/Costguard- \
+  NETBIRD_SETUP_KEY=<A10 setup key> \
   bash infra/setup_control_plane.sh
 ```
 
-Add the Object Storage values to `/etc/switchproof.env` (then `systemctl restart switchproof-control`):
+**B2. Block Storage.** Formats the blank volume, mounts it, moves the database onto it, downloads TabFormer:
 
 ```bash
-VULTR_S3_ENDPOINT=https://<hostname from step 1.7>
-VULTR_S3_ACCESS_KEY=<access key>
-VULTR_S3_SECRET_KEY=<secret key>
-VULTR_S3_BUCKET=switchproof-<unique>
-VULTR_PLAN=vx1-g-2c-8g        # optional: shown on the Infrastructure page
+sudo bash infra/setup_block_storage.sh
 ```
 
-Every run's evidence bundle is then archived to `runs/<run_id>/evidence.json` (public-read, synthetic data only) and linked from the GitHub issue.
-
-### 3b. Block Storage (`sp-control`)
+**B3. Kubernetes sandboxes.** Copy the kubeconfig from A4 to the VM first (`scp vke-*.yaml root@<ip>:/root/vke.yaml`), then:
 
 ```bash
-sudo bash infra/setup_block_storage.sh     # formats a blank /dev/vdb, mounts it, moves data/ onto it, downloads TabFormer
+sudo KUBECONFIG=/root/vke.yaml \
+  RUNNER_IMAGE=<A5 registry URL>/switchproof-runner:latest \
+  VCR_HOST=<registry host, e.g. sjc.vultrcr.com> VCR_USERNAME=<A5> VCR_PASSWORD=<A5> \
+  bash infra/setup_vke.sh
 ```
 
-Then join `sp-sandbox` to NetBird too and set the access policy: see [netbird.md](netbird.md).
+This script:
+1. installs gVisor on every node (`infra/k8s/gvisor-installer.yaml`);
+2. creates the locked sandbox namespace (`infra/k8s/sandbox.yaml`: RuntimeClass `gvisor`, *restricted* pod security, quota, deny-all NetworkPolicy, a dispatcher account that can only manage Jobs in that namespace);
+3. proves a pod really runs under gVisor (kernel `4.4.0` inside);
+4. hands the control plane a namespace-scoped token.
 
-## 4. Check before the demo
+**B4. NetBird.** Zero open ports, SSO/PIN roles, reviewer links:
 
 ```bash
-bash infra/preflight.sh            # on sp-control: PASS/FAIL per line, exit 1 on any FAIL
+sudo bash infra/setup_netbird_control.sh
 ```
 
-## 5. Public demo URL (recorded run)
+Then create the Reverse Proxy service in the NetBird dashboard: [netbird.md](netbird.md) §3.
+
+## Part C: check before the demo
 
 ```bash
-bash infra/publish_snapshot.sh <run_id>   # on sp-control
-# with Object Storage configured → https://<hostname>/<bucket>/site/index.html?snapshot=export.json  (hosted on Vultr)
-# otherwise → gh-pages: https://<owner>.github.io/<repo>/?snapshot=export.json
+bash infra/preflight.sh
 ```
+
+It prints PASS/FAIL for each item: inference reachable, Vultr instance metadata, Block Storage, Object Storage, Kubernetes API, gVisor RuntimeClass, nodes ready, and the isolation probe run as a real gVisor Job (7 attacks, all must say BLOCKED).
+
+## Part D: public demo URL
+
+- **Live:** the NetBird reverse-proxy URL (PIN for judges).
+- **Recorded copy on Vultr:** after a finished run, `bash infra/publish_snapshot.sh <run_id>` prints `https://<hostname>/<bucket>/site/index.html?snapshot=export.json`.
 
 ## Files
 
-- `setup_sandbox_host.sh`, `setup_control_plane.sh`: idempotent, safe to re-run (they `git pull` and restart).
-- `systemd/switchproof-sandbox.service`, `systemd/switchproof-control.service`: run as the unprivileged `switchproof` user with `EnvironmentFile=/etc/switchproof.env` (mode 640).
-- `setup_block_storage.sh`, `preflight.sh`, `publish_snapshot.sh`, `netbird.md`.
+| File | Purpose |
+|---|---|
+| `setup_control_plane.sh` | sp-control: packages, venv, `/etc/switchproof.env`, systemd, NetBird install |
+| `setup_block_storage.sh` | Mount Block Storage, move data onto it, download TabFormer |
+| `setup_vke.sh` + `k8s/*.yaml` | Sandbox cluster: gVisor, namespace hardening, dispatcher token |
+| `setup_netbird_control.sh`, `netbird.md` | NetBird: ufw on `wt0`, peer-status timer, reverse proxy + roles |
+| `preflight.sh` | Pre-demo PASS/FAIL checklist |
+| `publish_snapshot.sh` | Public read-only demo page on Object Storage |
+| `systemd/switchproof-control.service` | The control plane service (unprivileged user) |
+| `../.github/workflows/runner-image.yml` | Builds the runner image in CI and pushes it to Vultr Container Registry |
 
-Honest caveat: the sandbox service user is in the `docker` group, which is root-equivalent on `sp-sandbox`. That is why the sandbox API sits on its own VM, needs a token, and is reachable only from `sp-control`. Agent-written code only ever runs inside `runsc` containers with `--network none` and a read-only root.
+Honest notes: VKE doesn't ship gVisor, so the installer DaemonSet adds it to each node's containerd; if a node upgrade removes it, re-run `setup_vke.sh`. Deny-all networking depends on the cluster CNI enforcing NetworkPolicy, and the isolation probe proves it on the real cluster. For local development, `sandbox_host/` still runs tests as plain processes (`SANDBOX_MODE=local`), which is clearly marked *local-unsafe*.

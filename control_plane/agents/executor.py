@@ -4,7 +4,7 @@ import asyncio
 import os
 import uuid
 
-from control_plane import db, sandbox_client
+from control_plane import db, k8s, sandbox_client
 from control_plane.events import emit
 from shared.schemas import BatchRequest, CaseResult, Counts, TestCase
 
@@ -28,9 +28,9 @@ async def execute(run_id: str, cases: list[TestCase], loop_iter: int | None = No
     """Run `cases` in sandboxes. Caller guarantees they are human-approved (or triage follow-ups inside bounds)."""
     db.save_cases(cases)
     batches = [cases[i:i + BATCH] for i in range(0, len(cases), BATCH)]
-    parallel = PER_HOST * max(1, len(sandbox_client.urls()))
+    parallel = PER_HOST * max(1, len(sandbox_client.urls())) if not k8s.enabled() else int(os.environ.get("K8S_MAX_PARALLEL", "8"))
     emit(run_id, "executor", "info", f"Dispatching {len(cases):,} cases in {len(batches)} sandbox batch(es), "
-         f"{parallel} in parallel across {max(1, len(sandbox_client.urls()))} sandbox VM(s)", loop_iter=loop_iter)
+         + (f"{parallel} gVisor pods in parallel on Vultr Kubernetes" if k8s.enabled() else f"{parallel} in parallel across {max(1, len(sandbox_client.urls()))} sandbox VM(s)"), loop_iter=loop_iter)
     sem = asyncio.Semaphore(parallel)
     all_results: list[CaseResult] = []
     first_regression = [db.verdict_counts(run_id).get("regression", 0) > 0]

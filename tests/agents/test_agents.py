@@ -162,3 +162,54 @@ def test_netbird_status_parsing(monkeypatch):
     assert s["ip"] == "100.92.1.2" and s["sandbox_via_netbird"] is True
     assert s["peers"][0] == {"fqdn": "sp-sandbox.netbird.cloud", "ip": "100.92.1.3", "status": "Connected", "connection_type": "P2P", "latency_ms": 1.23}
     assert netbird._ms("850µs") == 0.85 and netbird._ms("2.5ms") == 2.5
+
+
+def test_kubernetes_backend_job_lifecycle(monkeypatch, tmp_path):
+    """Fake Kubernetes API whose 'pod' really runs the runner; checks hardening, logs parsing and teardown."""
+    import json as _json
+    import subprocess
+    import sys
+    import httpx
+    from control_plane import k8s, sandbox_client
+    from shared.schemas import BatchRequest
+    monkeypatch.setenv("SANDBOX_BACKEND", "k8s")
+    monkeypatch.setenv("K8S_API", "https://vke.example:6443")
+    monkeypatch.setenv("K8S_TOKEN", "t")
+    state = {"cm": {}, "jobs": {}, "calls": []}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        p, m = req.url.path, req.method
+        state["calls"].append((m, p))
+        assert req.headers["authorization"] == "Bearer t"
+        if m == "POST" and p.endswith("/configmaps"):
+            body = _json.loads(req.content); state["cm"][body["metadata"]["name"]] = body["data"]["input.json"]
+            return httpx.Response(201, json=body)
+        if m == "POST" and p.endswith("/jobs"):
+            job = _json.loads(req.content); state["jobs"][job["metadata"]["name"]] = job
+            return httpx.Response(201, json=job)
+        if m == "GET" and "/jobs/" in p:
+            return httpx.Response(200, json={"status": {"succeeded": 1}})
+        if m == "GET" and p.endswith("/pods"):
+            sel = req.url.params["labelSelector"].split("=", 1)[1]
+            return httpx.Response(200, json={"items": [{"metadata": {"name": sel + "-pod"}}] if sel in state["jobs"] else []})
+        if m == "GET" and p.endswith("/log"):
+            name = p.split("/pods/")[1][:-len("-pod/log")]
+            f = tmp_path / "input.json"; f.write_text(state["cm"][name])
+            out = subprocess.run([sys.executable, *state["jobs"][name]["spec"]["template"]["spec"]["containers"][0]["command"][1:-1], str(f)],
+                                 capture_output=True, text=True).stdout
+            return httpx.Response(200, text="INFO:switchcore some log line\n" + out, headers={"content-type": "text/plain"})
+        if m == "DELETE":
+            state["jobs"].pop(p.rsplit("/", 1)[1], None); state["cm"].pop(p.rsplit("/", 1)[1], None)
+            return httpx.Response(200, json={})
+        return httpx.Response(404, json={})
+    monkeypatch.setattr(k8s, "_transport", httpx.MockTransport(handler))
+    req = BatchRequest(batch_id="b1", run_id="r", cases=[demo_duplicate_case("r")])
+    res = asyncio.run(sandbox_client.run_batch(req))
+    assert res.results[0].verdict == "regression" and res.destroyed is True
+    job = next(iter([c for c in state["calls"] if c[1].endswith("/jobs")]))
+    assert not state["jobs"] and not state["cm"], "job and configmap must be deleted"
+    spec = k8s.job_manifest("sp-x", ["-m", "switchcore.runner"], 60)["spec"]["template"]["spec"]
+    c0 = spec["containers"][0]["securityContext"]
+    assert spec["runtimeClassName"] == "gvisor" and spec["automountServiceAccountToken"] is False
+    assert c0["readOnlyRootFilesystem"] and c0["capabilities"]["drop"] == ["ALL"] and not c0["allowPrivilegeEscalation"]
+    assert res.proof.runtime == "local-unsafe", "not really gVisor here, so the proof must not claim runsc"

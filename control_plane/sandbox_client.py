@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 
 import httpx
 
+from control_plane import k8s
 from shared.schemas import BatchRequest, BatchResult, JobRequest, JobResult, ProbeResult, SandboxProof
 
 log = logging.getLogger("switchproof.sandbox")
@@ -36,6 +37,8 @@ _warned = False
 
 def fake() -> bool:
     global _warned
+    if k8s.enabled():
+        return False
     if url() is None:
         if not _warned:
             _warned = True
@@ -76,6 +79,9 @@ def _fake_batch(req: BatchRequest) -> BatchResult:
 async def run_batch(req: BatchRequest) -> BatchResult:
     if fake():
         return await asyncio.to_thread(_fake_batch, req)
+    if k8s.enabled():
+        out, _, destroyed = await k8s.run(["-m", "switchcore.runner"], req.model_dump_json(), req.timeout_s)
+        return BatchResult.model_validate({**out, "destroyed": destroyed})
     hosts = urls()
     host = hosts[next(_next) % len(hosts)]              # round-robin: scale out by adding sandbox VMs
     return BatchResult.model_validate(await _call("POST", "/batch", req.model_dump_json(), timeout=req.timeout_s + 60, host=host))
@@ -94,16 +100,24 @@ def _fake_job(req: JobRequest) -> JobResult:
 async def run_job(req: JobRequest) -> JobResult:
     if fake():
         return await asyncio.to_thread(_fake_job, req)
+    if k8s.enabled():
+        out, _, destroyed = await k8s.run(["-m", req.module], json.dumps(req.args), req.timeout_s)
+        return JobResult(job_id=req.job_id, proof=out.pop("_proof"), output=out, destroyed=destroyed)
     return JobResult.model_validate(await _call("POST", "/job", req.model_dump_json(), timeout=req.timeout_s + 60))
 
 
 async def probe() -> ProbeResult:
+    if k8s.enabled():
+        out, _, destroyed = await k8s.run(["-m", "switchcore.runner", "--probe"], "{}", 60)
+        return ProbeResult.model_validate({**out, "destroyed": destroyed})
     if fake():
-        raise RuntimeError("isolation probe needs the real sandbox host (SANDBOX_HOST_URL)")
+        raise RuntimeError("isolation probe needs the real sandbox host (SANDBOX_HOST_URL) or SANDBOX_BACKEND=k8s")
     return ProbeResult.model_validate(await _call("POST", "/probe", timeout=120))
 
 
 async def health() -> dict:
+    if k8s.enabled():
+        return await k8s.health()
     if url() is None:
         return {"mode": "fake", "kvm": False, "runsc": False, "active_sandboxes": 0,
                 "hostname": socket.gethostname(), "uname": " ".join(x for x in platform.uname() if x),

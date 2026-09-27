@@ -40,7 +40,7 @@ def _readonly_root() -> bool:
 
 def proof() -> SandboxProof:
     ifaces = [i for i in _interfaces() if i != "lo"]
-    sandboxed = os.environ.get("SANDBOX_RUNTIME") == "runsc"
+    sandboxed = os.environ.get("SANDBOX_RUNTIME") == "runsc" and platform.release() == "4.4.0"   # gVisor's synthetic kernel
     return SandboxProof(
         sandbox_id=os.environ.get("SANDBOX_ID", f"local-{uuid.uuid4().hex[:8]}"),
         runtime="runsc" if sandboxed else "local-unsafe",

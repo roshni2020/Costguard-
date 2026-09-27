@@ -3,9 +3,10 @@
 # Usage:
 #   sudo REPO_URL=https://github.com/<you>/switchproof.git \
 #        VULTR_INFERENCE_API_KEY=... LLM_MODEL=... \
-#        SANDBOX_HOST_URL=http://<sp-sandbox VPC IP>:9000 SANDBOX_TOKEN=<from sandbox setup> \
+\
 #        GITHUB_TOKEN=... GITHUB_REPO=<owner>/<repo> NETBIRD_SETUP_KEY=... \
 #        bash infra/setup_control_plane.sh
+# Then: infra/setup_block_storage.sh, infra/setup_vke.sh (sandboxes on Vultr Kubernetes), infra/setup_netbird_control.sh
 set -euo pipefail
 
 REPO_URL="${REPO_URL:?set REPO_URL to the git URL of this repo}"
@@ -40,8 +41,11 @@ if [ ! -f "$ENV_FILE" ] || [ "${FORCE_ENV:-0}" = 1 ]; then
 VULTR_INFERENCE_API_KEY=${VULTR_INFERENCE_API_KEY:-}
 LLM_BASE_URL=${LLM_BASE_URL:-https://api.vultrinference.com/v1}
 LLM_MODEL=${LLM_MODEL:-}
-SANDBOX_HOST_URL=${SANDBOX_HOST_URL:-}
-SANDBOX_TOKEN=${SANDBOX_TOKEN:-}
+VULTR_S3_ENDPOINT=${VULTR_S3_ENDPOINT:-}
+VULTR_S3_ACCESS_KEY=${VULTR_S3_ACCESS_KEY:-}
+VULTR_S3_SECRET_KEY=${VULTR_S3_SECRET_KEY:-}
+VULTR_S3_BUCKET=${VULTR_S3_BUCKET:-}
+VULTR_PLAN=${VULTR_PLAN:-vx1-g-2c-8g}
 GITHUB_TOKEN=${GITHUB_TOKEN:-}
 GITHUB_REPO=${GITHUB_REPO:-}
 GITHUB_SHA=${GITHUB_SHA:-}
@@ -52,7 +56,7 @@ else
   echo "$ENV_FILE exists; left unchanged (FORCE_ENV=1 to rewrite)"
 fi
 chown root:switchproof "$ENV_FILE" && chmod 640 "$ENV_FILE"
-for v in VULTR_INFERENCE_API_KEY LLM_MODEL SANDBOX_HOST_URL SANDBOX_TOKEN; do
+for v in VULTR_INFERENCE_API_KEY LLM_MODEL VULTR_S3_BUCKET; do
   grep -q "^$v=." "$ENV_FILE" || echo "WARNING: $v is empty in $ENV_FILE"
 done
 

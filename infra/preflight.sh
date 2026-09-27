@@ -18,15 +18,15 @@ def line(ok, msg):
     fails += not ok
     print(("PASS  " if ok else "FAIL  ") + msg)
 line(llm.get("reachable") is True, f"LLM reachable: {llm.get('model')} at {llm.get('base_url')}")
-line("error" not in sb, f"sandbox host reachable: {sb.get('hostname', sb.get('error'))}")
-print(("PASS  " if sb.get("kvm") else "WARN  ") + "sandbox host has /dev/kvm (without it gVisor uses systrap; isolation still holds)")
-line(sb.get("runsc") is True, "sandbox host has gVisor runsc")
-line(sb.get("mode") == "gvisor", f"sandbox mode is gvisor (got {sb.get('mode')})")
+line("error" not in sb, f"Kubernetes API reachable: {sb.get('cluster_api', sb.get('error'))}")
+line(sb.get("mode") == "kubernetes", f"sandboxes run on Vultr Kubernetes (mode: {sb.get('mode')})")
+line(sb.get("runsc") is True, f"RuntimeClass {sb.get('runtime_class')} (gVisor) present in the cluster")
+nodes = sb.get("nodes") or []
+line(bool(nodes) and all(n.get("ready") for n in nodes), f"VKE nodes ready: {[n.get('name') for n in nodes]}")
 line(sb.get("active_sandboxes") == 0, f"no sandboxes left running (active: {sb.get('active_sandboxes')})")
 cp = s.get("control_plane") or {}
 vm, svm, st, os_ = cp.get("vultr") or {}, sb.get("vultr") or {}, cp.get("storage") or {}, s.get("object_storage") or {}
 line(vm.get("available") is True, f"control plane is a Vultr instance: {vm.get('instance_id')} in {vm.get('region')}")
-line(svm.get("available") is True, f"sandbox host is a Vultr instance: {svm.get('instance_id')} in {svm.get('region')}")
 line(st.get("is_block_storage") is True, f"data dir on Vultr Block Storage: {st.get('device')} at {st.get('mount_point')}, {st.get('free_gb')} GB free")
 line(os_.get("configured") is True, f"Vultr Object Storage configured: bucket {os_.get('bucket')} at {os_.get('endpoint')}")
 proof = p.get("proof") or {}

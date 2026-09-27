@@ -6,24 +6,23 @@ SwitchProof uses all four approaches from the Zero-Port Access bonus:
 |---|---|---|---|
 | 1 | **No open ports** | The public demo URL is a **NetBird Reverse Proxy** service targeting `sp-control:8000`. The Vultr firewall group has no rule for 8000 or 9000, and ufw only admits 8000 on the NetBird interface `wt0`. | Screenshot of Reverse Proxy → Services. `curl -m 5 http://<public IP>:8000` times out. |
 | 2 | **Gated access matched to roles** | The same service has **SSO restricted to group `testers`** (the payments tester, who may approve, run and block) plus a **PIN** for judges (read-only viewers). The proxy injects `X-NetBird-User` / `X-NetBird-Groups`. The app turns them into roles (`AUTH_MODE=netbird`) and records the SSO identity on the Block decision. | Authentication tab screenshot. The UI chip shows "Tester · NetBird SSO" vs "Viewer · read-only". The decision reads "blocked by you@… (authenticated by NetBird SSO)". |
-| 3 | **Peer-to-peer** | The control plane calls the sandbox API over the **NetBird WireGuard mesh** (`SANDBOX_HOST_URL=http://<sp-sandbox NetBird IP>:9000`). An access policy allows only `switchproof-control → switchproof-sandbox` on TCP 9000. | The Infrastructure page's peer table shows `sp-sandbox · P2P · 1.2 ms`, plus `netbird status -d` and the Access Control screenshot. |
+| 3 | **Peer-to-peer** | Operators reach `sp-control` over the **NetBird WireGuard mesh**, never over a public port. Your laptop is a peer, and SSH plus the internal UI go through `100.x.y.z`. An access policy allows only `admins → switchproof-control` on TCP 22/8000. Once that works, remove the public SSH rule from the Vultr firewall: zero inbound ports at all. | The Infrastructure page's peer table shows `roshni-laptop · P2P · 12 ms`, plus `netbird status -d` and the Access Control screenshot. |
 | 4 | **Lifecycle-bound URLs** | On the Decision screen, a tester creates a **temporary reviewer link** (for example for a compliance officer): `netbird expose 8000 --with-pin <random>`. It exists only while that run awaits its decision. Clicking Block or Approve kills it, and NetBird removes the service. | The run's event log shows "Reviewer link opened …" and later "… closed (decision recorded)". Opening the old URL fails. |
 
 ## 1. Account setup (dashboard, app.netbird.io)
 
-1. **Groups:** `switchproof-control`, `switchproof-sandbox`, `testers` (put your own user in it), `admins`.
-2. **Setup key:** reusable, auto-assigning the right group, with one key per VM (or change the group on the peer afterwards).
+1. **Groups:** `switchproof-control`, `testers` (put your own user in it), `admins` (your laptop peer).
+2. **Setup key:** for `sp-control`, auto-assigning group `switchproof-control`. Install the NetBird app on your laptop, log in, and put that peer in `admins`.
 3. **Settings → Clients → Enable Peer Expose.** Approach 4 needs this. Restrict it to group `switchproof-control`.
 4. **Access Control → Policies.** Delete the default *All → All*, then add:
 
 | Policy | Source | Destination | Port |
 |---|---|---|---|
-| control-to-sandbox | switchproof-control | switchproof-sandbox | TCP 9000 |
-| admin-ssh (optional) | admins | switchproof-control, switchproof-sandbox | TCP 22 |
+| admin-access | admins | switchproof-control | TCP 22, TCP 8000 |
 
-There is no sandbox → control policy. The sandbox containers themselves have `--network none`.
+The sandboxes don't need NetBird: they run in Vultr Kubernetes with a deny-all NetworkPolicy, so they have no network at all.
 
-## 2. Join both VMs
+## 2. Join sp-control (and your laptop)
 
 ```bash
 curl -fsSL https://pkgs.netbird.io/install.sh | sh
@@ -31,18 +30,10 @@ sudo netbird up --setup-key <SETUP_KEY>
 netbird status -d                 # NetBird IP (100.x.y.z), peers, connection type P2P/Relayed
 ```
 
-**sp-sandbox:** serve the API on the mesh only:
-
-```bash
-NB_IP=$(ip -4 -o addr show wt0 | awk '{print $4}' | cut -d/ -f1)
-sudo sed -i "s/^BIND_IP=.*/BIND_IP=$NB_IP/" /etc/switchproof.env && sudo systemctl restart switchproof-sandbox
-```
-
-**sp-control:** call the sandbox over the mesh, enable roles and review links, and let the root helper publish peer status:
+**sp-control:** enable roles and review links, and let the root helper publish peer status:
 
 ```bash
 sudo tee -a /etc/switchproof.env <<EOF
-SANDBOX_HOST_URL=http://<sp-sandbox NetBird IP>:9000
 AUTH_MODE=netbird
 NETBIRD_TESTER_GROUP=testers
 NETBIRD_EXPOSE=1
@@ -52,7 +43,7 @@ EOF
 sudo bash infra/setup_netbird_control.sh     # ufw: 8000 only on wt0; peer-status timer; restarts the app
 ```
 
-(If `SANDBOX_HOST_URL`/`BIND_IP` already exist in the file, edit those lines instead of appending.)
+(If `BIND_IP` already exists in the file, edit that line instead of appending.)
 
 If creating a reviewer link returns an error mentioning the daemon socket, the unprivileged `switchproof` user can't reach NetBird. Check `ls -l /var/run/netbird.sock` and `sudo -u switchproof netbird status`. Approaches 1–3 don't depend on this.
 
@@ -78,7 +69,7 @@ Anyone arriving with the PIN is a **viewer**: they can watch the whole run and a
 
 - Reverse Proxy → Services: the `switchproof` service, target `sp-control:8000`, status active.
 - The service's Authentication tab: SSO (group testers) + PIN.
-- Access Control → Policies: `control-to-sandbox` TCP 9000.
-- Peers: `sp-control` and `sp-sandbox` connected. `netbird status -d` showing `Connection type: P2P`.
+- Access Control → Policies: `admin-access` (admins → sp-control).
+- Peers: `sp-control` and your laptop connected. `netbird status -d` showing `Connection type: P2P`.
 - The SwitchProof Infrastructure page, NetBird card.
 - A terminal showing `curl -m 5 http://<sp-control public IP>:8000` → timeout.

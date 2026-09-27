@@ -72,7 +72,8 @@ def main(args: dict) -> dict:
 
 
 if __name__ == "__main__":
-    raw = sys.stdin.read() if not sys.stdin.isatty() else ""
+    files = [a for a in sys.argv[1:] if not a.startswith("-")]
+    raw = open(files[0]).read() if files else (sys.stdin.read() if not sys.stdin.isatty() else "")
     out = main(json.loads(raw) if raw.strip() else {})
     from switchcore.runner import proof
     out["_proof"] = proof().model_dump()       # sandbox host strips this into JobResult.proof
