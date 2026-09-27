@@ -77,4 +77,5 @@ if __name__ == "__main__":
     out = main(json.loads(raw) if raw.strip() else {})
     from switchcore.runner import proof
     out["_proof"] = proof().model_dump()       # sandbox host strips this into JobResult.proof
-    print(json.dumps(out))
+    from switchcore.runner import emit
+    emit(json.dumps(out))

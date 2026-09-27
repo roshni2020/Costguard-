@@ -60,7 +60,7 @@ def job_manifest(name: str, argv: list[str], timeout_s: int, pool: str = "agent"
             "command": ["python", *argv],
             "env": [{"name": "SANDBOX_ID", "value": name}, {"name": "SANDBOX_RUNTIME", "value": "runsc" if rc == "gvisor" else "none"},
                     {"name": "CONTROL_PLANE_ADDR", "value": os.environ.get("CONTROL_PLANE_ADDR", "10.0.0.1:8000")},
-                    {"name": "SANDBOX_POOL", "value": pool}],
+                    {"name": "SANDBOX_POOL", "value": pool}, {"name": "SANDBOX_OUTPUT", "value": "chunked"}],
             "securityContext": {"readOnlyRootFilesystem": True, "allowPrivilegeEscalation": False,
                                 "capabilities": {"drop": ["ALL"]}},
             "resources": {"limits": {"cpu": "1", "memory": "512Mi"}, "requests": {"cpu": "250m", "memory": "256Mi"}},
@@ -104,13 +104,27 @@ async def run(argv: list[str], stdin: str, timeout_s: int, pool: str = "agent") 
             if not pods:
                 raise RuntimeError(f"sandbox {name}: pod not found")
             log = (await _ok(await c.get(f"{base}/pods/{pods[0]['metadata']['name']}/log"))).get("text", "")
-            lines = [l for l in log.splitlines() if l.strip().startswith("{")]
-            if st.get("failed") or not lines:
+            payload = parse_output(log)
+            if st.get("failed") or payload is None:
                 raise RuntimeError(f"sandbox {name} failed: {log[-800:]}")
-            return json.loads(lines[-1]), name, await _destroy(c, name, pool)
+            return json.loads(payload), name, await _destroy(c, name, pool)
         except BaseException:
             await _destroy(c, name, pool)
             raise
+
+
+def parse_output(log: str) -> str | None:
+    """Reassemble `SPCHUNK <part>` lines (terminated by SPEND); fall back to the last JSON line."""
+    parts, done = [], False
+    for line in log.splitlines():
+        if line.startswith("SPCHUNK "):
+            parts.append(line[len("SPCHUNK "):])
+        elif line.strip() == "SPEND":
+            done = True
+    if parts:
+        return "".join(parts) if done else None
+    lines = [l for l in log.splitlines() if l.strip().startswith("{")]
+    return lines[-1] if lines else None
 
 
 async def _destroy(c: httpx.AsyncClient, name: str, pool: str) -> bool:

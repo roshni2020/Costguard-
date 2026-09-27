@@ -171,6 +171,7 @@ def test_netbird_status_parsing(monkeypatch):
 def test_kubernetes_backend_job_lifecycle(monkeypatch, tmp_path):
     """Fake Kubernetes API whose 'pod' really runs the runner; checks hardening, logs parsing and teardown."""
     import json as _json
+    import os
     import subprocess
     import sys
     import httpx
@@ -199,8 +200,10 @@ def test_kubernetes_backend_job_lifecycle(monkeypatch, tmp_path):
         if m == "GET" and p.endswith("/log"):
             name = p.split("/pods/")[1][:-len("-pod/log")]
             f = tmp_path / "input.json"; f.write_text(state["cm"][name])
-            out = subprocess.run([sys.executable, *state["jobs"][name]["spec"]["template"]["spec"]["containers"][0]["command"][1:-1], str(f)],
-                                 capture_output=True, text=True).stdout
+            ctr = state["jobs"][name]["spec"]["template"]["spec"]["containers"][0]
+            env = {**os.environ, **{e["name"]: e["value"] for e in ctr["env"]}}
+            env.pop("SANDBOX_RUNTIME", None)
+            out = subprocess.run([sys.executable, *ctr["command"][1:-1], str(f)], capture_output=True, text=True, env=env).stdout
             return httpx.Response(200, text="INFO:switchcore some log line\n" + out, headers={"content-type": "text/plain"})
         if m == "DELETE":
             state["jobs"].pop(p.rsplit("/", 1)[1], None); state["cm"].pop(p.rsplit("/", 1)[1], None)
@@ -267,3 +270,12 @@ def test_coordinator_survives_a_model_that_keeps_replanning(monkeypatch):
     after = db.get_run(run.id)
     assert after.status == "awaiting_approval" and after.cases, "must reach the human gate despite the stubborn model"
     assert sum(e.kind == "tool_call" and e.tool == "plan_rules" for e in db.events(run.id)) == 1
+
+
+def test_kubernetes_output_chunks_survive_log_line_limits():
+    from control_plane.k8s import parse_output
+    big = '{"x": "' + "a" * 100_000 + '"}'
+    log = "INFO:x\n" + "\n".join("SPCHUNK " + big[i:i + 32_000] for i in range(0, len(big), 32_000)) + "\nSPEND\n"
+    assert parse_output(log) == big
+    assert parse_output("SPCHUNK {\"a\"") is None, "incomplete output must not be parsed"
+    assert parse_output('noise\n{"ok": 1}\n') == '{"ok": 1}'

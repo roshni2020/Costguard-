@@ -52,11 +52,24 @@ def proof() -> SandboxProof:
     )
 
 
+CHUNK = 32_000   # Kubernetes/containerd cut single log lines at 64 KB; a 250-case BatchResult is bigger
+
+
+def emit(payload: str) -> None:
+    """Print the one JSON result. Chunked on Kubernetes so the log API returns it intact."""
+    if os.environ.get("SANDBOX_OUTPUT") != "chunked":
+        print(payload)
+        return
+    for i in range(0, len(payload), CHUNK):
+        print("SPCHUNK " + payload[i:i + CHUNK])
+    print("SPEND")
+
+
 def main() -> None:
     logging.basicConfig(stream=sys.stderr, level=logging.INFO)
     if "--probe" in sys.argv:
         from switchcore.probe import run_probe
-        print(run_probe(proof()).model_dump_json())
+        emit(run_probe(proof()).model_dump_json())
         return
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     raw = open(args[0]).read() if args else sys.stdin.read()
@@ -66,8 +79,8 @@ def main() -> None:
         results = [run_case(c, set(req.new_switch_bugs), set(req.old_switch_bugs), transport="tcp") for c in req.cases]
     finally:
         close_pool()
-    print(BatchResult(batch_id=req.batch_id, run_id=req.run_id, proof=proof(), results=results,
-                      started_at=started, finished_at=now(), destroyed=False).model_dump_json())
+    emit(BatchResult(batch_id=req.batch_id, run_id=req.run_id, proof=proof(), results=results,
+                     started_at=started, finished_at=now(), destroyed=False).model_dump_json())
 
 
 if __name__ == "__main__":
