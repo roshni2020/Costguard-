@@ -21,7 +21,7 @@
    "phase": "plan"
   },
   "loop_iter": 1,
-  "model": "Qwen/Qwen2.5-32B-Instruct",
+  "model": "laguna-s-2.1",
   "tokens_in": 812,
   "tokens_out": 41,
   "latency_ms": 1240,
@@ -54,7 +54,7 @@
    "phase": "plan"
   },
   "loop_iter": 1,
-  "model": "Qwen/Qwen2.5-32B-Instruct",
+  "model": "laguna-s-2.1",
   "tokens_in": 1406,
   "tokens_out": 388,
   "latency_ms": 3920,
@@ -84,7 +84,7 @@
    "phase": "plan"
   },
   "loop_iter": 2,
-  "model": "Qwen/Qwen2.5-32B-Instruct",
+  "model": "laguna-s-2.1",
   "tokens_in": 1022,
   "tokens_out": 38,
   "latency_ms": 1110,
@@ -117,7 +117,7 @@
    "phase": "plan"
   },
   "loop_iter": 2,
-  "model": "Qwen/Qwen2.5-32B-Instruct",
+  "model": "laguna-s-2.1",
   "tokens_in": 2310,
   "tokens_out": 2874,
   "latency_ms": 11840,
@@ -147,7 +147,7 @@
    "phase": "plan"
   },
   "loop_iter": 3,
-  "model": "Qwen/Qwen2.5-32B-Instruct",
+  "model": "laguna-s-2.1",
   "tokens_in": 1180,
   "tokens_out": 22,
   "latency_ms": 980,
@@ -219,7 +219,7 @@
   "to_agent": "coordinator",
   "loop_iter": 4,
   "tool": "execute_tests",
-  "seq": 51
+  "seq": 52
  },
  {
   "ts": "2026-09-27T16:05:23Z",
@@ -232,11 +232,11 @@
    "phase": "triage"
   },
   "loop_iter": 5,
-  "model": "Qwen/Qwen2.5-32B-Instruct",
+  "model": "laguna-s-2.1",
   "tokens_in": 1530,
   "tokens_out": 44,
   "latency_ms": 1310,
-  "seq": 52
+  "seq": 53
  },
  {
   "ts": "2026-09-27T16:05:24Z",
@@ -252,7 +252,7 @@
   "to_agent": "triage",
   "loop_iter": 5,
   "tool": "generate_followups",
-  "seq": 53
+  "seq": 54
  },
  {
   "ts": "2026-09-27T16:05:25Z",
@@ -265,11 +265,11 @@
    "phase": "triage"
   },
   "loop_iter": 5,
-  "model": "Qwen/Qwen2.5-32B-Instruct",
+  "model": "laguna-s-2.1",
   "tokens_in": 1904,
   "tokens_out": 512,
   "latency_ms": 4720,
-  "seq": 54
+  "seq": 55
  },
  {
   "ts": "2026-09-27T16:05:46Z",
@@ -282,7 +282,7 @@
   "to_agent": "coordinator",
   "loop_iter": 5,
   "tool": "generate_followups",
-  "seq": 67
+  "seq": 68
  },
  {
   "ts": "2026-09-27T16:05:47Z",
@@ -295,7 +295,7 @@
   "to_agent": "reporter",
   "loop_iter": 6,
   "tool": "file_report",
-  "seq": 68
+  "seq": 69
  },
  {
   "ts": "2026-09-27T16:05:48Z",
@@ -307,7 +307,7 @@
   },
   "to_agent": "coordinator",
   "loop_iter": 6,
-  "seq": 69
+  "seq": 70
  },
  {
   "ts": "2026-09-27T16:05:56Z",
@@ -320,7 +320,7 @@
   "to_agent": "coordinator",
   "loop_iter": 6,
   "tool": "file_report",
-  "seq": 71
+  "seq": 72
  },
  {
   "ts": "2026-09-27T16:05:57Z",
@@ -332,7 +332,7 @@
   },
   "to_agent": "human",
   "loop_iter": 6,
-  "seq": 73
+  "seq": 74
  },
  {
   "ts": "2026-09-27T16:02:17Z",
@@ -362,7 +362,7 @@
   "ts": "2026-09-27T16:03:23Z",
   "agent": "executor",
   "kind": "message",
-  "message": "Starting gVisor sandboxes on sp-sandbox (network none, read-only root)",
+  "message": "Starting gVisor Jobs on Vultr Kubernetes Engine (namespace switchproof-sandbox, deny-all egress, read-only root)",
   "data": {
    "phase": "run"
   },
@@ -380,7 +380,7 @@
   },
   "to_agent": "coordinator",
   "loop_iter": 4,
-  "seq": 26
+  "seq": 27
  },
  {
   "ts": "2026-09-27T16:03:33Z",
@@ -392,7 +392,7 @@
   },
   "to_agent": "executor",
   "loop_iter": 4,
-  "seq": 27
+  "seq": 28
  },
  {
   "ts": "2026-09-27T16:05:30Z",
@@ -408,20 +408,20 @@
   "to_agent": "executor",
   "loop_iter": 5,
   "tool": "execute_tests",
-  "seq": 55
+  "seq": 56
  },
  {
   "ts": "2026-09-27T16:05:44Z",
   "agent": "executor",
   "kind": "tool_result",
-  "message": "8 follow-ups executed in sandbox sbx-a1c807, destroyed",
+  "message": "AGENT sandbox pool: 8 follow-ups executed in Job sp-agent-a1c8073e5f, deleted",
   "data": {
    "phase": "triage"
   },
   "to_agent": "triage",
   "loop_iter": 5,
   "tool": "execute_tests",
-  "seq": 65
+  "seq": 66
  },
  {
   "ts": "2026-09-27T16:09:03Z",
@@ -434,6 +434,6 @@
    "phase": "decision"
   },
   "to_agent": "coordinator",
-  "seq": 74
+  "seq": 75
  }
 ]

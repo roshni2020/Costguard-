@@ -2,7 +2,7 @@
  {
   "name": "coordinator",
   "role": "Runs the tool-calling loop and routes work",
-  "model": "Qwen/Qwen2.5-32B-Instruct",
+  "model": "laguna-s-2.1",
   "state": "waiting_human",
   "last_message": "Critical regression confirmed. Please decide: block the migration or approve release.",
   "llm_calls": 4,
@@ -11,7 +11,7 @@
  {
   "name": "planner",
   "role": "Turns rules into states worth testing",
-  "model": "Qwen/Qwen2.5-32B-Instruct",
+  "model": "laguna-s-2.1",
   "state": "done",
   "last_message": "10 states across 4 rules",
   "llm_calls": 1,
@@ -20,7 +20,7 @@
  {
   "name": "generator",
   "role": "Writes ISO 8583 test cases",
-  "model": "Qwen/Qwen2.5-32B-Instruct",
+  "model": "laguna-s-2.1",
   "state": "done",
   "last_message": "10 cases written, 0 rejected by schema check",
   "llm_calls": 1,
@@ -28,17 +28,17 @@
  },
  {
   "name": "executor",
-  "role": "Runs approved tests in gVisor sandboxes",
+  "role": "Runs approved tests as gVisor Jobs on VKE",
   "model": null,
   "state": "done",
-  "last_message": "2,012 executed: 1,968 pass, 41 regression, 3 error",
+  "last_message": "AGENT sandbox pool: 8 follow-ups executed in Job sp-agent-a1c8073e5f, deleted",
   "llm_calls": 0,
   "tokens": 0
  },
  {
   "name": "triage",
   "role": "Finds the failure boundary with follow-ups",
-  "model": "Qwen/Qwen2.5-32B-Instruct",
+  "model": "laguna-s-2.1",
   "state": "done",
   "last_message": "Boundary: gap >= 1 s approved twice",
   "llm_calls": 1,

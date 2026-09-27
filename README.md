@@ -14,7 +14,7 @@ Card processors and US banks face the same risk every time they replace a paymen
 
 1. **Rules**: a tester types the payment rules in plain English, plus bounds (max amount, message types).
 2. **Review tests**: agents on **Vultr Serverless Inference** plan and write ISO 8583 test cases. **Nothing runs until the human approves or rejects every test.**
-3. **Run in sandboxes**: approved tests (plus ~2,000 replayed IBM TabFormer transactions) run in throwaway **gVisor** sandboxes on a separate Vultr VM. Each sandbox sends each message to three mock switches: `old_a` and `old_b` (two identical legacy copies, used to filter noise) and `new`.
+3. **Run in sandboxes**: approved tests (plus ~2,000 replayed IBM TabFormer transactions) run as throwaway **Kubernetes Jobs under a gVisor RuntimeClass on Vultr Kubernetes Engine (VKE)**, one Job per batch, in **two separate pools**: agent-written tests in one, the replay data in another, on different VMs. Each sandbox pod sends each message to three mock switches: `old_a` and `old_b` (two identical legacy copies, used to filter noise) and `new`.
 4. **Evidence**: the seeded defect shows up. The new switch **approves a duplicate $250.00 purchase retried 5 s later** (the customer is charged twice), while the legacy switch rejects it with `94 Duplicate transmission`. The triage agent automatically runs follow-ups *inside the human's bounds* and finds the boundary ("retries 1 s or more apart get approved"). The reporter files a GitHub issue and sets the release check to pending.
 5. **Decision**: the tester clicks **Block migration**, and the GitHub check turns red.
 
@@ -27,53 +27,74 @@ Bonus: an **RL explorer**, trained on CPU inside a sandbox against 7 mutant swit
 | coordinator | Vultr LLM, tool-calling loop | Decides the next tool: plan, generate, request approval, run, triage, report |
 | planner | Vultr LLM | Breaks each rule into states worth testing |
 | generator | Vultr LLM | Writes ISO 8583 test cases within bounds |
-| executor | no LLM | Batches approved cases to the sandbox host |
+| executor | no LLM | Submits approved cases as gVisor Jobs on VKE, collects results, deletes the Jobs |
 | triage | Vultr LLM | Proposes follow-ups to find the failure boundary |
 | reporter | no LLM (templated) | Files the GitHub issue, sets the `switchproof/migration-gate` commit status |
 | rl | no LLM, CPU | Learned bug-hunting policy |
 
 ## Architecture
 
+One Vultr VM (`sp-control`) plus a Vultr Kubernetes Engine cluster for the sandboxes. No Docker runs on any VM.
+
 ```mermaid
 flowchart LR
-  T["Tester / judge (browser)"] -- "NetBird overlay only" --> UI
+  J["Tester / judge (browser)"] -- "HTTPS" --> NB["NetBird reverse proxy<br/>SSO for testers · PIN for judges"]
+  NB -- "WireGuard, no open ports" --> UI
   subgraph VPC["Vultr VPC"]
-    subgraph CP["sp-control (VX1)"]
+    subgraph CP["sp-control · Vultr Compute VX1"]
       UI["Web UI"] --- API["FastAPI control plane"]
       API --- AG["Agents: coordinator, planner, generator, triage, reporter"]
+      API --- BS[("Vultr Block Storage<br/>SQLite + TabFormer")]
     end
-    subgraph SB["sp-sandbox (VX1)"]
-      SH["Sandbox host API :9000"] --> G["gVisor (runsc) sandbox, no network, read-only root<br/>old_a · old_b · new switches"]
+    subgraph VKE["Vultr Kubernetes Engine · gVisor RuntimeClass · deny-all egress · read-only root · no credentials"]
+      AJ["AGENT pool · namespace switchproof-agent<br/>node pool agent-pool (own VM)<br/>agent-written, human and triage tests"]
+      DJ["DATA pool · namespace switchproof-data<br/>node pool data-pool (different VM)<br/>TabFormer replay only, refuses agent code"]
     end
   end
-  AG -- "HTTPS" --> VI["Vultr Serverless Inference"]
-  API -- "token; VPC / NetBird only" --> SH
-  API -- "issue + commit status" --> GH["GitHub"]
+  AG -- "HTTPS" --> VI["Vultr Serverless Inference<br/>laguna-s-2.1"]
+  API -- "Kubernetes API (TLS), namespace-scoped tokens" --> AJ & DJ
+  VCR["Vultr Container Registry<br/>switchproof-runner image"] -- "image pull" --> AJ & DJ
+  GA["GitHub Actions<br/>builds the runner image"] --> VCR
+  API -- "evidence bundle" --> OS["Vultr Object Storage"]
+  API -- "issue + release gate" --> GH["GitHub"]
 ```
 
 More detail, including a sequence diagram: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## How Vultr is used
 
-- **2 × VX1 instances** (`sp-control`, `sp-sandbox`) on one **Vultr VPC**. Agent-written tests never execute on the control plane.
-- **Vultr Serverless Inference** (`https://api.vultrinference.com/v1`, OpenAI-compatible) powers every LLM agent. The UI shows the model on every LLM call.
-- **gVisor sandboxes** on `sp-sandbox`: every batch runs in a fresh `runsc` container with `--network none` and a read-only root, and is destroyed afterwards.
-- A Vultr **firewall group** allows SSH from one IP only. No app port is public.
+| Vultr product | What it does here |
+| --- | --- |
+| **Compute** (VX1 `sp-control`) | Control plane, agents, web UI. The Infrastructure tab reads its instance metadata (instance id, region, plan, IPs), so "show me the instance" is one click. |
+| **Kubernetes Engine** (VKE) | The sandbox cluster: every test batch is a Kubernetes Job under a gVisor RuntimeClass, deleted after the batch. Two node pools on separate VMs: `agent-pool` (agent-written tests) and `data-pool` (replay data only). |
+| **Serverless Inference** (`laguna-s-2.1`) | The LLM behind every agent (`https://api.vultrinference.com/v1`, OpenAI-compatible). The UI shows the model on every LLM call. |
+| **Container Registry** | Holds the sandbox runner image. GitHub Actions builds it from `sandbox_host/Dockerfile.runner` and pushes it here. |
+| **Object Storage** | One evidence bundle per run (linked from Evidence and Decision), plus the public recorded demo page. |
+| **Block Storage** | The run database and the IBM TabFormer dataset on `sp-control` (the Infrastructure tab shows the mount). |
+| **VPC** | Private network for the VM and the cluster nodes. |
+
+A Vultr firewall group allows SSH from one IP only. No app port is public. The sandbox pods cannot reach the metadata service, and the probe proves it.
 
 Setup: [infra/README.md](infra/README.md).
 
 ## How NetBird is used
 
-- Both VMs join a NetBird network. Access policies allow **only control plane → sandbox host TCP 9000** and **judges → control plane TCP 8000**.
-- The UI is reached over NetBird, not a public port. Details: [infra/netbird.md](infra/netbird.md).
+- **Zero-port access**: the public URL is served by the NetBird reverse proxy over WireGuard, with no inbound app ports on the Vultr VM. The Infrastructure tab shows the NetBird peers (for example the admin laptop, P2P) with path and latency.
+- **Identity and roles**: NetBird SSO identifies the user. Members of the `testers` group can approve, run and decide. Everyone else gets a read-only view, and the server records the authenticated identity on the decision.
+- **Lifecycle-bound reviewer link**: while a run awaits a decision, a tester can open a temporary PIN-protected link (`netbird expose`). It closes automatically when the migration is blocked or approved.
+- The control plane reaches the sandbox cluster only through the Kubernetes API over TLS, with a token scoped to the sandbox namespace. Details: [infra/netbird.md](infra/netbird.md).
 
-## Five safety checkpoints (the Safety tab)
+## Five safety checkpoints (the Infrastructure tab)
 
-1. **Host check**: the sandbox host reports `/dev/kvm` and gVisor `runsc` present, mode `gvisor`.
-2. **Agent ran tests in a sandbox**: every batch records a proof (sandbox id, runtime).
-3. **Proof from inside**: hostname and `uname` captured *inside* the sandbox. gVisor answers with its own kernel version, not the host's.
-4. **Isolation probe**: a fresh sandbox tries `rm -rf /`, internet egress, reaching the control plane, writing the root filesystem, reading host `/etc` and the Docker socket. Each is shown as BLOCKED or ALLOWED.
-5. **Teardown**: active sandboxes return to 0, and each sandbox is marked destroyed.
+1. **Cluster check**: VKE nodes are Ready and the `gvisor` RuntimeClass is present.
+2. **Agent ran tests in a sandbox**: every batch records a proof (Job name, runtime).
+3. **Proof from inside**: hostname and `uname` captured *inside* the pod. gVisor answers with its own kernel (`4.4.0`), not the node's.
+4. **Isolation probe**: a fresh gVisor Job tries `rm -rf /`, internet egress, DNS, reaching the control plane, the cloud metadata service, writing system files and a Docker socket. Each is shown as BLOCKED or ALLOWED.
+5. **Teardown**: each Job is deleted after its batch and active sandbox Jobs return to 0.
+
+Agent code and customer-like data never share a sandbox or a machine: agent-written tests run in namespace `switchproof-agent` on node pool `agent-pool`, and the TabFormer replay runs in `switchproof-data` on `data-pool`, which refuses agent-written code.
+
+Every sandbox pod gets: restricted Pod Security · deny-all NetworkPolicy · no ServiceAccount token · read-only root · drop ALL capabilities · ResourceQuota 20 pods · Job deleted after each batch.
 
 Plus the human gate: the server returns `409` if you try to execute while any test is still proposed.
 
@@ -92,7 +113,7 @@ pip install -r requirements.txt
 LLM_OFFLINE=1 python -m uvicorn control_plane.app:app --port 8000
 # open http://127.0.0.1:8000
 
-# Optional: a real (unsafe, dev-only) local sandbox host
+# Optional: a local (unsafe, dev-only) sandbox host that runs tests as plain processes; on Vultr, sandboxes are gVisor Jobs on VKE
 SANDBOX_MODE=local SANDBOX_TOKEN=dev python -m uvicorn sandbox_host.app:app --port 9000
 # then start the control plane with:
 SANDBOX_HOST_URL=http://127.0.0.1:9000 SANDBOX_TOKEN=dev LLM_OFFLINE=1 python -m uvicorn control_plane.app:app --port 8000
@@ -110,18 +131,18 @@ python -m pytest tests -q
 python -m rl.experiment
 ```
 
-UI modes: live (default), `?mock=1` (fixture-driven simulation of all 5 steps), `?snapshot=<url of export.json>` (read-only recorded run).
+UI modes: live (default), `?mock=1` (fixture-driven simulation of all 5 steps; add `&viewer=1` to see the read-only role), `?snapshot=<url of export.json>` (read-only recorded run). Add `?theme=dark` or `?theme=light` to force a theme (dark is the default look for recordings).
 
 ## Repo layout
 
 ```
 shared/          pydantic schemas (source of truth for every JSON shape)
 switchcore/      ISO 8583 codec + mock switches (legacy and new, bug flags)
-control_plane/   FastAPI app, agents, coordinator loop, GitHub integration
-sandbox_host/    sandbox API, gVisor runner image
+control_plane/   FastAPI app, agents, coordinator loop, Kubernetes Job dispatcher, NetBird, Object Storage, GitHub
+sandbox_host/    local-dev sandbox runner + Dockerfile.runner (the image is built in GitHub Actions and pushed to Vultr Container Registry)
 rl/              RL explorer and experiment
 web/             vanilla JS UI (index.html, app.js, app.css) + mock/ fixtures
-infra/           Vultr + NetBird setup scripts, systemd units, preflight, snapshot publishing
+infra/           Vultr, VKE (k8s manifests) and NetBird setup scripts, systemd unit, preflight, snapshot publishing
 docs/            CONTRACT.md, ARCHITECTURE.md, DEMO.md, fixtures/
 tests/           pytest suites (tests/web validates UI fixtures against the schemas)
 ```

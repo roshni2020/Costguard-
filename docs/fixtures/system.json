@@ -1,19 +1,95 @@
 {
  "control_plane": {
   "hostname": "sp-control",
-  "uname": "Linux sp-control 6.8.0-45-generic #45-Ubuntu SMP x86_64"
+  "uname": "Linux sp-control 6.8.0-45-generic #45-Ubuntu SMP x86_64",
+  "vultr": {
+   "available": true,
+   "instance_id": "fake-control-0000-0000-000000000001",
+   "region": "atl",
+   "plan": "vx1-g-2c-8g",
+   "hostname": "sp-control",
+   "public_ip": "203.0.113.10",
+   "private_ip": "10.10.0.3"
+  },
+  "storage": {
+   "data_dir": "/mnt/blockstorage/switchproof",
+   "device": "/dev/vdb",
+   "mount_point": "/mnt/blockstorage",
+   "total_gb": 40.0,
+   "free_gb": 37.4,
+   "is_block_storage": true
+  }
  },
  "sandbox_host": {
-  "kvm": true,
+  "mode": "kubernetes",
+  "cluster_api": "https://fake-0000-cluster.vultr-k8s.com:6443",
+  "namespace": "switchproof-agent",
+  "image": "atl.vultrcr.com/switchproof/switchproof-runner:latest",
+  "runtime_class": "gvisor",
   "runsc": true,
-  "mode": "gvisor",
+  "kvm": null,
   "active_sandboxes": 0,
-  "hostname": "sp-sandbox",
-  "uname": "Linux sp-sandbox 6.8.0-45-generic #45-Ubuntu SMP x86_64"
+  "nodes": [
+   {
+    "name": "agent-pool-fake-node-01",
+    "pool": "agent-pool",
+    "ready": true,
+    "kubelet": "v1.31.2",
+    "runtime": "containerd://1.7.22",
+    "cpu": "2",
+    "memory": "8148560Ki"
+   },
+   {
+    "name": "data-pool-fake-node-01",
+    "pool": "data-pool",
+    "ready": true,
+    "kubelet": "v1.31.2",
+    "runtime": "containerd://1.7.22",
+    "cpu": "2",
+    "memory": "8148560Ki"
+   }
+  ],
+  "hostname": "VKE · 2 node(s)",
+  "uname": "containerd://1.7.22",
+  "pools": {
+   "agent": {
+    "namespace": "switchproof-agent",
+    "node_pool": "agent-pool"
+   },
+   "data": {
+    "namespace": "switchproof-data",
+    "node_pool": "data-pool"
+   }
+  }
  },
  "llm": {
   "base_url": "https://api.vultrinference.com/v1",
-  "model": "Qwen/Qwen2.5-32B-Instruct",
-  "reachable": true
+  "model": "laguna-s-2.1",
+  "offline": false,
+  "reachable": true,
+  "models": [
+   "laguna-s-2.1"
+  ]
+ },
+ "object_storage": {
+  "configured": true,
+  "endpoint": "https://ewr1.vultrobjects.com",
+  "bucket": "switchproof-evidence-example"
+ },
+ "netbird": {
+  "available": true,
+  "ip": "100.92.0.10",
+  "fqdn": "sp-control.netbird.cloud",
+  "public_url": "https://switchproof-demo.proxy.netbird.io",
+  "peers": [
+   {
+    "fqdn": "roshni-laptop.netbird.cloud",
+    "ip": "100.92.0.20",
+    "status": "Connected",
+    "connection_type": "P2P",
+    "latency_ms": 12.4
+   }
+  ],
+  "sandbox_via_netbird": false
  }
 }

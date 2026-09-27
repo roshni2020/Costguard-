@@ -1,0 +1,9 @@
+{
+ "auth": "netbird",
+ "user": "roshni@example.com",
+ "groups": [
+  "testers"
+ ],
+ "role": "tester",
+ "can_act": true
+}

@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SwitchProof</title>
+  <meta name="color-scheme" content="dark light">
+  <title>SwitchProof · Migration mission control</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="app.css">
 </head>
@@ -11,22 +12,23 @@
   <a class="skip" href="#main">Skip to content</a>
   <header class="top">
     <div class="brand">
-      <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 3 6v6c0 5 3.8 9.4 9 10 5.2-.6 9-5 9-10V6l-9-4Z" fill="currentColor" opacity=".15"/><path d="M12 2 3 6v6c0 5 3.8 9.4 9 10 5.2-.6 9-5 9-10V6l-9-4Zm-1.2 14.2-3.5-3.5 1.4-1.4 2.1 2.1 4.9-4.9 1.4 1.4-6.3 6.3Z" fill="currentColor"/></svg>
-      <b>SwitchProof</b>
+      <svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 3 6v6c0 5 3.8 9.4 9 10 5.2-.6 9-5 9-10V6l-9-4Z" fill="currentColor" opacity=".18"/><path d="M12 2 3 6v6c0 5 3.8 9.4 9 10 5.2-.6 9-5 9-10V6l-9-4Zm-1.2 14.2-3.5-3.5 1.4-1.4 2.1 2.1 4.9-4.9 1.4 1.4-6.3 6.3Z" fill="currentColor"/></svg>
+      <span><b>SwitchProof</b><small>migration mission control</small></span>
     </div>
-    <div id="sys" class="sys"></div>
-    <div id="stats" class="stats"></div>
+    <div id="badge" class="badge-live"></div>
+    <div id="model"></div>
+    <div id="me"></div>
+    <details id="switcher" class="switcher">
+      <summary id="sw-sum">Runs</summary>
+      <div class="pop" id="runs"></div>
+    </details>
+    <button class="btn primary" data-act="new">+ New migration test</button>
   </header>
   <div id="mode" class="mode" hidden></div>
-  <aside class="side" aria-label="Runs">
-    <button class="btn primary block" data-act="new">+ New migration test</button>
-    <h2 class="side-h">Runs</h2>
-    <nav id="runs"></nav>
-  </aside>
-  <main class="wrap">
+  <div class="shell">
     <nav id="rail" class="rail" aria-label="Steps"></nav>
-    <div id="main" tabindex="-1"></div>
-  </main>
+    <main id="main" tabindex="-1"></main>
+  </div>
   <div id="toasts" role="status" aria-live="polite"></div>
   <script type="module" src="app.js"></script>
 </body>

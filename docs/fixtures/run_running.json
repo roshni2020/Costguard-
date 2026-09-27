@@ -454,27 +454,27 @@
  "sandboxes_used": 3,
  "proofs": [
   {
-   "sandbox_id": "sbx-3f2a00",
+   "sandbox_id": "sp-agent-3f2a9c01de",
    "runtime": "runsc",
-   "hostname": "sp-3f2a",
-   "uname": "Linux sp-3f2a 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
-   "network": "none",
+   "hostname": "sp-agent-3f2a9c01de-x7k2p",
+   "uname": "Linux sp-agent-3f2a9c01de-x7k2p 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+   "network": "eth0",
    "readonly_rootfs": true
   },
   {
-   "sandbox_id": "sbx-81c001",
+   "sandbox_id": "sp-data-81c0b7e2a4",
    "runtime": "runsc",
-   "hostname": "sp-81c0",
-   "uname": "Linux sp-81c0 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
-   "network": "none",
+   "hostname": "sp-data-81c0b7e2a4-m4q9d",
+   "uname": "Linux sp-data-81c0b7e2a4-m4q9d 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+   "network": "eth0",
    "readonly_rootfs": true
   },
   {
-   "sandbox_id": "sbx-5d1702",
+   "sandbox_id": "sp-data-5d17f09c3b",
    "runtime": "runsc",
-   "hostname": "sp-5d17",
-   "uname": "Linux sp-5d17 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
-   "network": "none",
+   "hostname": "sp-data-5d17f09c3b-t2w8z",
+   "uname": "Linux sp-data-5d17f09c3b-t2w8z 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+   "network": "eth0",
    "readonly_rootfs": true
   }
  ],

@@ -771,70 +771,86 @@
   "noise": 0,
   "error": 3
  },
- "sandboxes_used": 8,
+ "sandboxes_used": 10,
  "proofs": [
   {
-   "sandbox_id": "sbx-3f2a00",
+   "sandbox_id": "sp-agent-3f2a9c01de",
    "runtime": "runsc",
-   "hostname": "sp-3f2a",
-   "uname": "Linux sp-3f2a 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
-   "network": "none",
+   "hostname": "sp-agent-3f2a9c01de-x7k2p",
+   "uname": "Linux sp-agent-3f2a9c01de-x7k2p 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+   "network": "eth0",
    "readonly_rootfs": true
   },
   {
-   "sandbox_id": "sbx-81c001",
+   "sandbox_id": "sp-data-81c0b7e2a4",
    "runtime": "runsc",
-   "hostname": "sp-81c0",
-   "uname": "Linux sp-81c0 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
-   "network": "none",
+   "hostname": "sp-data-81c0b7e2a4-m4q9d",
+   "uname": "Linux sp-data-81c0b7e2a4-m4q9d 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+   "network": "eth0",
    "readonly_rootfs": true
   },
   {
-   "sandbox_id": "sbx-5d1702",
+   "sandbox_id": "sp-data-5d17f09c3b",
    "runtime": "runsc",
-   "hostname": "sp-5d17",
-   "uname": "Linux sp-5d17 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
-   "network": "none",
+   "hostname": "sp-data-5d17f09c3b-t2w8z",
+   "uname": "Linux sp-data-5d17f09c3b-t2w8z 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+   "network": "eth0",
    "readonly_rootfs": true
   },
   {
-   "sandbox_id": "sbx-c94e03",
+   "sandbox_id": "sp-data-c94e62d815",
    "runtime": "runsc",
-   "hostname": "sp-c94e",
-   "uname": "Linux sp-c94e 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
-   "network": "none",
+   "hostname": "sp-data-c94e62d815-b6n3r",
+   "uname": "Linux sp-data-c94e62d815-b6n3r 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+   "network": "eth0",
    "readonly_rootfs": true
   },
   {
-   "sandbox_id": "sbx-0b6a04",
+   "sandbox_id": "sp-data-0b6a4e7f90",
    "runtime": "runsc",
-   "hostname": "sp-0b6a",
-   "uname": "Linux sp-0b6a 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
-   "network": "none",
+   "hostname": "sp-data-0b6a4e7f90-h9c5v",
+   "uname": "Linux sp-data-0b6a4e7f90-h9c5v 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+   "network": "eth0",
    "readonly_rootfs": true
   },
   {
-   "sandbox_id": "sbx-e27305",
+   "sandbox_id": "sp-data-e273c5a1d8",
    "runtime": "runsc",
-   "hostname": "sp-e273",
-   "uname": "Linux sp-e273 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
-   "network": "none",
+   "hostname": "sp-data-e273c5a1d8-q1f7j",
+   "uname": "Linux sp-data-e273c5a1d8-q1f7j 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+   "network": "eth0",
    "readonly_rootfs": true
   },
   {
-   "sandbox_id": "sbx-49fd06",
+   "sandbox_id": "sp-data-49fd8b20c6",
    "runtime": "runsc",
-   "hostname": "sp-49fd",
-   "uname": "Linux sp-49fd 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
-   "network": "none",
+   "hostname": "sp-data-49fd8b20c6-z8d4k",
+   "uname": "Linux sp-data-49fd8b20c6-z8d4k 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+   "network": "eth0",
    "readonly_rootfs": true
   },
   {
-   "sandbox_id": "sbx-a1c807",
+   "sandbox_id": "sp-data-7a2e91c4d0",
    "runtime": "runsc",
-   "hostname": "sp-a1c8",
-   "uname": "Linux sp-a1c8 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
-   "network": "none",
+   "hostname": "sp-data-7a2e91c4d0-r3s6m",
+   "uname": "Linux sp-data-7a2e91c4d0-r3s6m 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+   "network": "eth0",
+   "readonly_rootfs": true
+  },
+  {
+   "sandbox_id": "sp-data-b3f60d8e17",
+   "runtime": "runsc",
+   "hostname": "sp-data-b3f60d8e17-k5v1c",
+   "uname": "Linux sp-data-b3f60d8e17-k5v1c 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+   "network": "eth0",
+   "readonly_rootfs": true
+  },
+  {
+   "sandbox_id": "sp-agent-a1c8073e5f",
+   "runtime": "runsc",
+   "hostname": "sp-agent-a1c8073e5f-w2g8e",
+   "uname": "Linux sp-agent-a1c8073e5f-w2g8e 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+   "network": "eth0",
    "readonly_rootfs": true
   }
  ],
@@ -857,7 +873,8 @@
  },
  "github": {
   "issue_url": "https://github.com/switchproof-demo/switchproof/issues/12",
-  "status_state": "pending"
+  "status_state": "pending",
+  "evidence_url": "https://ewr1.vultrobjects.com/switchproof-evidence-example/run_3f2a9c/evidence.zip"
  },
  "decision": null,
  "rl": {

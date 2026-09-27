@@ -27,8 +27,10 @@ def test_runs():
         Run(**load(name))
     aw = Run(**load("run_awaiting_decision.json"))
     assert (aw.counts.total, aw.counts.passed, aw.counts.regression, aw.counts.error) == (2012, 1968, 41, 3)
-    assert aw.sandboxes_used == 8 and aw.triage and aw.github["status_state"] == "pending"
+    assert aw.sandboxes_used == len(aw.proofs) and aw.triage and aw.github["status_state"] == "pending"
     assert all(p.runtime == "runsc" for p in aw.proofs)
+    pools = {p.sandbox_id.split("-")[1] for p in aw.proofs}  # sp-agent-… / sp-data-…
+    assert pools == {"agent", "data"}
     ap = Run(**load("run_awaiting_approval.json"))
     assert len(ap.cases) == 10 and all(c.status == "proposed" for c in ap.cases)
 
@@ -51,9 +53,23 @@ def test_events_agents_misc():
         AgentStatus(**a)
     probe = ProbeResult(**load("probe.json"))
     assert sum(c.outcome == "BLOCKED" for c in probe.checks) >= 5
-    RLReport(**load("rl_report.json"))
+    rl = RLReport(**load("rl_report.json"))
+    assert {"learned", "random", "learned_training_mix", "random_training_mix"} <= rl.first_find.keys() <= rl.curves.keys() | rl.first_find.keys()
+    assert rl.first_find["learned"] > rl.first_find["random"]  # honest: no generalisation to the held-out bug
     system = load("system.json")
-    assert {"control_plane", "sandbox_host", "llm"} <= system.keys()
+    assert {"control_plane", "sandbox_host", "llm", "object_storage"} <= system.keys()
+    assert {"available", "instance_id", "region", "plan", "public_ip", "private_ip"} <= system["control_plane"]["vultr"].keys()
+    sb = system["sandbox_host"]  # sandboxes are Kubernetes Jobs on VKE under a gVisor RuntimeClass
+    assert sb["mode"] == "kubernetes" and sb["runtime_class"] == "gvisor" and sb["runsc"] and all(n["ready"] for n in sb["nodes"])
+    assert sb["pools"]["agent"]["node_pool"] != sb["pools"]["data"]["node_pool"]  # agent code and data never share a machine
+    assert {n["pool"] for n in sb["nodes"]} == {sb["pools"]["agent"]["node_pool"], sb["pools"]["data"]["node_pool"]}
+    assert {"device", "mount_point", "total_gb", "free_gb", "is_block_storage"} <= system["control_plane"]["storage"].keys()
+    assert system["llm"]["model"] == "laguna-s-2.1"
+    assert any("metadata" in c.name.lower() for c in probe.checks)
+    nb = system["netbird"]
+    assert nb["available"] and nb["peers"][0]["connection_type"] == "P2P" and nb["ip"].startswith("100.") and not nb["sandbox_via_netbird"]
+    me = load("me.json")
+    assert {"auth", "user", "groups", "role", "can_act"} <= me.keys() and me["role"] == "tester"
 
 
 def test_export():

@@ -1,25 +1,27 @@
-// SwitchProof UI: vanilla ES module, no build step. Modes: live (default), ?mock=1, ?snapshot=<export.json url>.
+// SwitchProof UI ("mission control"): vanilla ES module, no build step.
+// Modes: live (default), ?mock=1, ?snapshot=<export.json url>. Optional ?theme=dark|light.
 const qs = new URLSearchParams(location.search);
 const MODE = qs.has('snapshot') ? 'snapshot' : qs.get('mock') === '1' ? 'mock' : 'live';
 const $ = (s) => document.querySelector(s);
 const TERMINAL = ['blocked', 'approved_for_release'];
 const CODES = { '00': 'Approved', 14: 'Invalid card number', 25: 'Original not found', 51: 'Insufficient funds', 54: 'Expired card',
   55: 'Incorrect PIN', 62: 'Restricted card', 94: 'Duplicate transmission', 96: 'System malfunction' };
+const SHORT = { '00': 'Approved', 14: 'Invalid card', 25: 'Not found', 51: 'Insufficient', 54: 'Expired', 55: 'Bad PIN', 62: 'Restricted', 94: 'Duplicate', 96: 'Malfunction' };
 const MTI = { '0100': 'Authorization', '0200': 'Purchase', '0400': 'Reversal', '0110': 'Authorization response', '0210': 'Purchase response', '0410': 'Reversal response' };
 const AGENTS = ['coordinator', 'planner', 'generator', 'executor', 'triage', 'reporter', 'rl'];
 const ROLE = { coordinator: 'Runs the tool-calling loop and routes work', planner: 'Turns rules into states worth testing',
-  generator: 'Writes ISO 8583 test cases', executor: 'Runs approved tests in gVisor sandboxes', triage: 'Finds the failure boundary with follow-ups',
-  reporter: 'Writes the report and GitHub issue', rl: 'Explores for bugs with a learned policy' };
-const COLOR = { coordinator: '#3b4cca', planner: '#0e7490', generator: '#7c3aed', executor: '#475569', triage: '#a15c00',
-  reporter: '#0f766e', rl: '#1d6fa5', human: '#b0206a', system: '#64748b' };
+  generator: 'Writes ISO 8583 test cases', executor: 'Runs approved tests as gVisor Jobs on VKE', triage: 'Finds the failure boundary with follow-ups',
+  reporter: 'Files the GitHub issue and release check (templated)', rl: 'Explores for bugs with a learned policy' };
+const COLOR = { coordinator: '#818cf8', planner: '#2dd4bf', generator: '#c084fc', executor: '#94a3b8', triage: '#facc15',
+  reporter: '#fdba74', rl: '#60a5fa', human: '#f472b6', system: '#7c8aa5' };
 const RULES = { approve_purchase: 'Approve a purchase when funds are available', decline_insufficient: 'Decline a purchase for insufficient funds',
   reject_duplicate: 'Reject a duplicate purchase (same card, STAN and amount within 60 seconds)', reverse_approved: 'Reverse an approved payment and restore the balance',
   decline_bad_pin: 'Decline an incorrect PIN', decline_expired: 'Decline an expired card', decline_bad_card: 'Decline an unknown card',
   technical_glitch: 'Technical glitch', replay: 'Replayed TabFormer transactions', custom: 'Custom' };
 const FIELD = { t: 'Message type', 2: 'Card number', 3: 'Processing code', 4: 'Amount', 7: 'Transmission time (MMDDhhmmss)', 11: 'STAN',
   14: 'Expiry (YYMM)', 18: 'Merchant category', 22: 'Entry mode', 37: 'Retrieval reference', 39: 'Response code', 41: 'Terminal ID', 48: 'Private data', 49: 'Currency' };
-const STEPS = [['rules', 'Rules'], ['review', 'Review tests'], ['run', 'Run in sandboxes'], ['evidence', 'Evidence'], ['decision', 'Decision']];
-const TABS = [['agents', 'Agents'], ['safety', 'Safety'], ['rl', 'RL explorer']];
+const STEPS = [['rules', 'Rules'], ['review', 'Approve'], ['run', 'Run'], ['evidence', 'Evidence'], ['decision', 'Decision']];
+const TABS = [['agents', 'Agents'], ['infra', 'Infrastructure'], ['rl', 'RL explorer']];
 const STATUS_VIEW = { draft: 'review', planning: 'review', awaiting_approval: 'review', running: 'run', triaging: 'run',
   awaiting_decision: 'evidence', blocked: 'decision', approved_for_release: 'decision' };
 const STATUS_LABEL = { draft: 'Draft', planning: 'Agents planning', awaiting_approval: 'Awaiting your approval', running: 'Running in sandboxes',
@@ -29,8 +31,8 @@ const CONV_KINDS = ['message', 'tool_call', 'tool_result', 'llm_call', 'decision
 
 const S = { runs: [], run: null, events: [], agents: [], system: null, probe: null, results: null, triageResults: null,
   view: 'rules', verdict: 'regression', sel: null, editing: null, convAgent: '', showLLM: true, findingSeen: false, flashUntil: 0,
-  busy: false, probing: false, loadingResults: false, dirty: false, lastKey: '' };
-
+  busy: false, probing: false, loadingResults: false, dirty: false, lastKey: '', replayStep: 0, seen: new Set(), me: null, share: undefined, shareWas: false };
+const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 // ---------- helpers ----------
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -46,6 +48,10 @@ const code = (c) => `<span class="code"><b>${esc(c)}</b>${esc(CODES[c] || 'Unkno
 const col = (a) => COLOR[a] || COLOR.system;
 const nm = (a) => (a === 'rl' ? 'RL' : a);
 const safeUrl = (u) => (/^https:\/\//i.test(u || '') ? u : '#');
+const k8s = () => S.system?.sandbox_host?.mode === 'kubernetes';
+const poolOf = (p) => (String(p?.sandbox_id || '').startsWith('sp-data-') ? 'data' : 'agent'); // older ids without a prefix: agent lane
+const WALL = '<div class="wall" role="separator" aria-label="separate namespaces, separate VMs"><span>separate namespaces · separate VMs</span></div>';
+const netLabel = (n) => `${n}${k8s() ? ' · egress denied by NetworkPolicy' : ''}`;
 const runtimeLabel = (r) => (r === 'runsc' ? 'gVisor (runsc)' : 'local-unsafe (dev)');
 const lastSeq = () => S.events.at(-1)?.seq ?? 0;
 const stage = (st) => ORDER.indexOf(st);
@@ -127,10 +133,10 @@ function deriveAgents(events, status, base = AGENTS.map((name) => ({ name, role:
 
 // Mock mode: replays the whole story from web/mock/*.json with local state changes.
 const FX = {};
-const M = { run: null, t0: 0, rlT0: 0, decisionEvents: [] };
+const M = { run: null, t0: 0, rlT0: 0, decisionEvents: [], share: null };
 const DUR = { planning: 5000, running: 10000, triaging: 4000 };
 async function loadMock() {
-  const names = ['run_awaiting_approval', 'run_awaiting_decision', 'results_regression', 'events', 'events_conversation', 'agents', 'system', 'probe', 'rl_report'];
+  const names = ['run_awaiting_approval', 'run_awaiting_decision', 'results_regression', 'events', 'events_conversation', 'agents', 'system', 'probe', 'rl_report', 'me'];
   await Promise.all(names.map(async (n) => { FX[n] = await (await fetch(`mock/${n}.json`)).json(); }));
 }
 function mockAdvance() {
@@ -164,6 +170,8 @@ async function mockApi(method, path, body = {}) {
   await sleep(120);
   mockAdvance();
   const [p, q] = path.split('?'), params = new URLSearchParams(q), r = M.run;
+  if (p === '/api/me') return clone(FX.me);
+  if (method !== 'GET' && FX.me.can_act === false) throw httpErr(403, "Read-only: approvals need the 'testers' group via NetBird SSO");
   if (p === '/api/system') return clone(FX.system);
   if (p === '/api/system/probe') { await sleep(1500); return clone(FX.probe); }
   if (p === '/api/runs' && method === 'GET') return r ? [{ ...clone(r), cases: [] }] : [];
@@ -194,7 +202,14 @@ async function mockApi(method, path, body = {}) {
     case 'GET export': return { run: clone(r), results: FX.results_regression, events: mockEvents() };
     case 'GET rl': return clone(r.rl);
     case 'POST rl': M.rlT0 = Date.now(); r.rl = { status: 'running' }; return { ok: true };
+    case 'GET share': return clone(M.share || { active: false });
+    case 'DELETE share': M.share = null; return { active: false };
+    case 'POST share':
+      if (r.status !== 'awaiting_decision') throw httpErr(409, 'A reviewer link can only be opened while the run awaits a decision');
+      M.share = { active: true, url: 'https://sp-review-7f3a.proxy.netbird.io', pin: '482913', expires: 'when the decision is recorded' };
+      return clone(M.share);
     case 'POST decision': {
+      M.share = null;
       const block = body.decision === 'block', ts = new Date().toISOString(), seq = (mockEvents().at(-1)?.seq || 0) + 1;
       Object.assign(r, { status: block ? 'blocked' : 'approved_for_release', decision: { ...body, ts }, github: { ...r.github, status_state: block ? 'failure' : 'success' } });
       M.decisionEvents = [
@@ -212,6 +227,8 @@ async function snapApi(method, path) {
   if (method !== 'GET') throw httpErr(405, 'This is a recorded run, so it is read-only.');
   if (!SNAP) { const r = await fetch(qs.get('snapshot')); if (!r.ok) throw httpErr(r.status, 'Could not load the recorded run'); SNAP = await r.json(); }
   const { run, results, events } = SNAP, [p, q] = path.split('?'), params = new URLSearchParams(q);
+  if (p === '/api/me') return { auth: 'none', user: null, groups: [], role: 'viewer', can_act: false };
+  if (p === '/api/system' && SNAP.system) return SNAP.system;
   if (p === '/api/system') {
     const runsc = run.proofs.some((x) => x.runtime === 'runsc');
     return { control_plane: { hostname: 'recorded' }, sandbox_host: { kvm: null, runsc, mode: runsc ? 'gvisor' : 'local', active_sandboxes: 0, hostname: 'recorded' },
@@ -224,6 +241,7 @@ async function snapApi(method, path) {
   if (rest === 'results') return filterResults(results, params);
   if (rest === 'agents') return deriveAgents(events, run.status);
   if (rest === 'rl') return run.rl;
+  if (rest === 'share') return { active: false };
   throw httpErr(404, 'Not recorded');
 }
 
@@ -238,7 +256,8 @@ function addEvents(evs) {
 async function selectRun(id, view) {
   try {
     const [run, evs] = await Promise.all([api('GET', `/api/runs/${id}`), api('GET', `/api/runs/${id}/events?after=0`)]);
-    Object.assign(S, { run, events: [], results: null, triageResults: null, sel: null, editing: null, probe: null });
+    clearInterval(replayTimer);
+    Object.assign(S, { run, events: [], results: null, triageResults: null, sel: null, editing: null, probe: null, replayStep: 0, seen: new Set(), share: undefined });
     addEvents(evs);
     S.findingSeen = S.events.some((e) => e.kind === 'finding'); S.flashUntil = 0;
     S.view = view || STATUS_VIEW[run.status];
@@ -270,12 +289,14 @@ async function loadResults() {
   } catch (e) { toast(`Could not load results: ${e.message}`, 'err'); S.results = []; S.triageResults ||= []; }
   S.loadingResults = false;
   render();
+  if (S.view === 'evidence') startReplay();
 }
 
 let ticks = 0;
 async function tick() {
   if (ticks++ % 10 === 0) {
     try { S.system = await api('GET', '/api/system'); } catch (e) { S.system = { error: e.message }; }
+    if (!S.noMe) try { S.me = await api('GET', '/api/me'); } catch (e) { S.me = null; S.noMe = e.status === 404; } // older backend: local dev, stop asking
     try { S.runs = await api('GET', '/api/runs'); } catch (e) { toast(`Could not list runs: ${e.message}`, 'err'); }
   }
   try {
@@ -288,7 +309,7 @@ async function tick() {
 async function act(fn) {
   S.busy = true; render();
   let ok = true;
-  try { await fn(); } catch (e) { ok = false; toast(e.status === 409 ? `Blocked by the approval gate: ${e.message}` : e.message, 'err'); }
+  try { await fn(); } catch (e) { ok = false; toast(e.message, 'err'); } // 403/409/503 details come from the server
   S.busy = false;
   if (S.run) { try { await refreshRun(); } catch { /* next tick retries */ } }
   render(ok); // on failure keep any half-edited form as the user left it
@@ -298,25 +319,107 @@ async function act(fn) {
 const SRC = { llm: 'Vultr AI', dataset: 'TabFormer replay', triage: 'Triage follow-up', rl: 'RL explorer', human: 'Human' };
 const badge = (src) => `<span class="chip src-${esc(src)}">${esc(SRC[src] || src)}</span>`;
 const verdictChip = (v) => `<span class="chip v-${esc(v)}">${v === 'regression' ? '✗ ' : v === 'pass' ? '✓ ' : ''}${esc({ both_wrong: 'both wrong' }[v] || v)}</span>`;
-const gateChip = (st) => (st ? `<span class="chip gate-${esc(st)}">GitHub release check: ${esc(st)}</span>` : '');
-const agentStrip = () => `<div class="strip">${S.agents.map((a) => `<span title="${esc(a.state)}"><i class="dot ${esc(a.state)}"></i>${esc(nm(a.name))} <span class="sr">${esc(a.state)}</span></span>`).join('')}</div>`;
-const feed = (evs) => `<ol class="feed">${evs.map((e) => `<li class="k-${esc(e.kind)}"><span class="ag" style="--c:${col(e.agent)}">${esc(nm(e.agent))}</span><time>${tm(e.ts)}</time><span>${esc(e.message)}</span></li>`).join('') || '<li><span></span><span></span><span class="muted">No activity yet.</span></li>'}</ol>`;
-const empty = (msg) => `<section class="card"><p class="muted">${msg}</p></section>`;
-const lock = '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5Zm-3 8V7a3 3 0 1 1 6 0v3H9Z"/></svg>';
+const gateChip = (st) => (st ? `<span class="chip gate-${esc(st)}">GitHub gate: ${esc(st)}</span>` : '');
+const agentStrip = () => `<div class="strip">${S.agents.map((a) => `<span title="${esc(a.state)}"><i class="dot ${esc(a.state)}"></i>${esc(nm(a.name))}<span class="sr"> ${esc(a.state)}</span></span>`).join('')}</div>`;
+const empty = (msg) => `<section class="panel"><p class="muted">${msg}</p></section>`;
+const LOCK = (open, size = 16) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="${open
+  ? 'M17 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-4V7a3 3 0 1 1 6 0v1h2V7a5 5 0 0 0-5-5Z'
+  : 'M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5Zm-3 8V7a3 3 0 1 1 6 0v3H9Z'}"/></svg>`;
+const K8S = '<svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2 3.3 6.5v9L12 22l8.7-6.5v-9L12 2Zm0 2.3 6.7 3.5v7.2L12 20l-6.7-5V7.8L12 4.3Zm0 3.2a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9Z"/></svg>';
+const SERVER = '<svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 3h16a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Zm0 10h16a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1Zm3-7a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3Zm0 10a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3Z"/></svg>';
+const ruleIcon = (t) => (/duplicate/i.test(t) ? '⧉' : /revers/i.test(t) ? '↺' : /insufficient|decline/i.test(t) ? '⊘' : /approve/i.test(t) ? '✓' : '§');
+const casesOf = (r) => (r?.cases || []).filter((c) => c.source !== 'triage');
+const gateOpen = (r) => !!r && (stage(r.status) >= stage('running') || (casesOf(r).length > 0 && !casesOf(r).some((c) => c.status === 'proposed')));
+const extraDebit = (bd) => { const pan = Object.keys(bd?.old_a || {})[0]; return pan == null ? 0 : bd.old_a[pan] - (bd.new?.[pan] ?? 0); }; // > 0: customer overcharged
+const canAct = () => MODE !== 'snapshot' && S.me?.can_act !== false;
+const RO_MSG = "Read-only: approvals need the 'testers' group via NetBird SSO";
+const roLine = () => (!canAct() && MODE !== 'snapshot' ? `<p class="roline">${LOCK(false, 14)} ${RO_MSG}</p>` : '');
+const dis = (extra = false) => (extra || !canAct() ? `disabled title="${canAct() ? '' : RO_MSG}"` : '');
+const SHIELD = '<svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2 3 6v6c0 5 3.8 9.4 9 10 5.2-.6 9-5 9-10V6l-9-4Z"/></svg>';
+const calloutText = (extra, dup) => (extra > 0 ? `${dup ? 'Charged twice' : 'Overcharged'}: +${usd(extra)}` : '');
+
+function termlog(evs, title = 'agent-log') {
+  return `<div class="termlog"><div class="th"><i></i><i></i><i></i><span>${esc(title)}</span></div><ol data-bottom="1">${evs.map((e) =>
+    `<li class="k-${esc(e.kind)}" style="--c:${col(e.agent)}"><time>${tm(e.ts)}</time><b>${esc(nm(e.agent))}${e.to_agent ? ' →' : ''}</b><span>${e.to_agent ? `<em class="ag-c" style="--c:${col(e.to_agent)}">${esc(nm(e.to_agent))}</em> ` : ''}${esc(e.message)}</span></li>`).join('')
+    || '<li><time></time><b></b><span>waiting for agents…</span></li>'}</ol></div>`;
+}
 
 function findingText() {
   const f = S.events.find((e) => e.kind === 'finding'); if (!f) return '';
   const d = f.data || {}, c = S.run.cases.find((x) => x.id === d.case_id);
   if (c?.rule === 'reject_duplicate') return `New switch approved a duplicate ${usd(c.steps[0].amount_cents)} payment`;
-  if (d.old_code === '94' && d.new_code === '00') { // legacy said duplicate, new approved: extra debit = the duplicate amount
-    const bd = d.balance_delta_cents || {}, pan = Object.keys(bd.old_a || {})[0];
-    const extra = pan != null ? (bd.old_a[pan] - (bd.new?.[pan] ?? 0)) : 0;
-    return `New switch approved a duplicate ${extra > 0 ? usd(extra) + ' ' : ''}payment`;
-  }
+  if (d.old_code === '94' && d.new_code === '00') { const x = extraDebit(d.balance_delta_cents); return `New switch approved a duplicate ${x > 0 ? usd(x) + ' ' : ''}payment`; }
   return f.message;
 }
+const findingBanner = () => { const t = S.findingSeen && findingText(); return t ? `<div class="banner danger ${Date.now() < S.flashUntil ? 'flash' : ''}" role="alert"><span class="tag">REGRESSION</span>✗ ${esc(t)}</div>` : ''; };
 
-const findingBanner = () => { const t = S.findingSeen && findingText(); return t ? `<div class="banner danger ${Date.now() < S.flashUntil ? 'flash' : ''}" role="alert">✗ ${esc(t)}</div>` : ''; };
+// ---------- hero: card terminal → OLD A / OLD B / NEW ----------
+function heroSvg({ codes = null, expected = null, callout = '', label = '', packets = true }) {
+  const boxes = [['old_a', 'OLD A', 'legacy v4', 26], ['old_b', 'OLD B', 'legacy v4', 104], ['new', 'NEW', 'NewSwitch v1', 182]];
+  const move = packets && !reduced();
+  const reg = codes && codes.new !== codes.old_a && codes.old_a === codes.old_b;
+  const paths = boxes.map(([, , , y]) => `M150 118 C 320 118, 330 ${y + 26}, 496 ${y + 26}`);
+  const pk = paths.map((p, i) => (move ? [0, 1].map((j) => `<circle r="4.5" class="pkt"><animateMotion dur="2.2s" begin="-${(i * 0.3 + j * 1.1).toFixed(1)}s" repeatCount="indefinite" path="${p}"/></circle>`).join('')
+    : `<circle r="4.5" class="pkt" cx="330" cy="${(118 + boxes[i][3] + 26) / 2}"/>`)).join('');
+  const box = ([k, name, sub, y]) => {
+    const cd = codes?.[k];
+    const st = !cd ? '' : k === 'new' && reg ? 'bad' : expected && cd === expected ? 'ok' : '';
+    const mark = cd && expected ? (cd === expected ? '<tspan fill="var(--good)">✓ </tspan>' : '<tspan fill="var(--bad)">✗ </tspan>') : '';
+    return `<rect class="box ${st}" x="496" y="${y}" width="244" height="52" rx="10"/>
+      <text x="512" y="${y + 23}" font-size="13" font-weight="700" class="t-mono">${name}</text><text x="512" y="${y + 41}" font-size="11" class="t-muted">${sub}</text>
+      <text x="726" y="${y + 27}" font-size="22" font-weight="800" text-anchor="end" class="t-mono" ${st === 'bad' ? 'fill="var(--bad)"' : ''}>${mark}${esc(cd || '···')}</text>
+      <text x="726" y="${y + 44}" font-size="11" text-anchor="end" class="t-muted">${esc(cd ? SHORT[cd] || CODES[cd] || '' : 'waiting')}</text>`;
+  };
+  const aria = codes ? `Old A ${codes.old_a}, Old B ${codes.old_b}, New ${codes.new}${callout ? '. ' + callout : ''}` : 'Messages in flight to the three switches';
+  return `<svg viewBox="0 0 760 272" role="img" aria-label="${esc(aria)}">
+    ${paths.map((p) => `<path d="${p}" class="ln" fill="none" stroke-width="2" stroke-dasharray="3 5"/>`).join('')}${pk}
+    <rect class="term" x="20" y="70" width="130" height="96" rx="12" stroke-width="1.5"/>
+    <rect x="34" y="82" width="102" height="30" rx="5" fill="var(--bg2)"/><text x="85" y="102" text-anchor="middle" font-size="11" class="t-mono" fill="var(--cyan)">ISO 8583</text>
+    ${[0, 1, 2].flatMap((cx) => [0, 1].map((cy) => `<rect x="${42 + cx * 30}" y="${122 + cy * 18}" width="24" height="12" rx="3" fill="var(--line2)"/>`)).join('')}
+    <text x="85" y="186" text-anchor="middle" font-size="12" font-weight="600">Card terminal</text>
+    <text x="323" y="16" text-anchor="middle" font-size="11" class="t-muted t-mono">${esc(label)}</text>
+    ${boxes.map(box).join('')}
+    ${callout ? `<g class="callout"><rect x="526" y="242" width="214" height="26" rx="7"/><text x="633" y="260" text-anchor="middle" font-size="13">${esc(callout)}</text></g>` : ''}</svg>`;
+}
+
+function heroInner() {
+  const r = S.run;
+  if (S.view === 'evidence') {
+    const x = S.results?.find((y) => y.case.id === S.sel);
+    if (!x) return heroSvg({ packets: false });
+    const res = x.result, c = x.case, n = res.steps.length, i = Math.min(S.replayStep, n - 1), s = res.steps[i];
+    if (!s) return heroSvg({ packets: false });
+    const dup = res.steps.some((t) => t.old_a_code === '94' && t.new_code === '00');
+    const cs = c.steps[i] || {};
+    return heroSvg({ codes: { old_a: s.old_a_code, old_b: s.old_b_code, new: s.new_code }, expected: s.expected_code,
+      callout: i === n - 1 ? calloutText(extraDebit(res.balance_delta_cents), dup) : '', label: `${cs.mti || ''} ${MTI[cs.mti] || ''} · STAN ${cs.stan || ''} · t+${secs(cs.at_offset_s)}s` })
+      + `<div class="cap"><span class="chip">step ${i + 1}/${n}</span><b>${esc(stepText(cs, c.steps[i - 1]))}</b><span>expected ${code(s.expected_code)}</span><span class="spacer"></span>
+        ${res.steps.map((_, j) => `<button class="btn small" data-act="replay-step" data-i="${j}" aria-pressed="${j === i}" aria-label="Show step ${j + 1}">${j + 1}</button>`).join('')}
+        <button class="btn small" data-act="replay">Replay ▶</button></div>`;
+  }
+  const f = S.events.find((e) => e.kind === 'finding' && e.data?.new_code);
+  const active = ['running', 'triaging'].includes(r.status);
+  if (f) {
+    const d = f.data;
+    return heroSvg({ codes: { old_a: d.old_code, old_b: d.old_code, new: d.new_code }, expected: d.old_code, packets: active,
+      callout: calloutText(extraDebit(d.balance_delta_cents), d.old_code === '94' && d.new_code === '00'), label: 'first regression found' })
+      + `<div class="cap"><b>${esc(f.message)}</b></div>`;
+  }
+  return heroSvg({ packets: active, label: active ? 'sending approved tests to all three switches' : '' })
+    + `<div class="cap">${active ? '<span class="spin"></span> Each ISO 8583 message goes to both legacy copies and the new switch.' : 'No regression found.'}</div>`;
+}
+const heroBlock = () => `<section class="panel hero" id="hero" aria-label="Switch diagram">${heroInner()}</section>`;
+const drawHero = () => { const el = $('#hero'); if (el) el.innerHTML = heroInner(); };
+
+let replayTimer = null;
+function startReplay() {
+  clearInterval(replayTimer);
+  const x = S.results?.find((y) => y.case.id === S.sel); if (!x) return;
+  const n = x.result.steps.length;
+  if (reduced()) { const m = x.result.steps.findIndex((s) => s.new_code !== s.expected_code || s.old_a_code !== s.expected_code); S.replayStep = m < 0 ? n - 1 : m; drawHero(); return; }
+  S.replayStep = 0; drawHero();
+  replayTimer = setInterval(() => { if (S.replayStep >= n - 1 || S.view !== 'evidence') { clearInterval(replayTimer); return; } S.replayStep++; drawHero(); }, 1400);
+}
 
 // ---------- views ----------
 const DEFAULT_RULES = 'Legacy v4 checks every 0100/0200 in this order: unknown card -> 14; blocked card -> 62; expired card -> 54; incorrect PIN -> 55; issuer glitch -> 96; duplicate (same card, STAN and amount within 60 seconds) -> 94; balance below amount -> 51; otherwise approve 00 and debit. 0400 reversals: original not found or not approved -> 25; already reversed -> 94; otherwise credit back 00.';
@@ -325,31 +428,33 @@ const DEFAULT_SPEC = 'ISO 8583 (ASCII). MTI 0100 auth, 0200 purchase, 0400 rever
 function viewRules() {
   const r = S.run;
   if (r) {
-    return `<section class="card"><h2>${esc(r.title)}</h2><p class="muted">Submitted ${dt(r.created_at)} · ${esc(STATUS_LABEL[r.status])}</p>
-      <h3>Requirements</h3><ol>${r.requirements.map((x) => `<li>${esc(x)}</li>`).join('')}</ol>
-      <p><b>Bounds:</b> up to ${usd(r.bounds.max_amount_cents)} per transaction · ${r.bounds.allowed_mti.map((m) => esc(MTI[m] || m)).join(', ')} · automatic follow-ups ${r.bounds.auto_followups ? 'on' : 'off'}</p>
-      <p><b>Replay:</b> ${r.replay.enabled ? `${num(r.replay.sample_size)} transactions from IBM's public synthetic TabFormer benchmark` : 'off'}</p>
-      <details data-k="rules-src"><summary>Legacy rules and message spec</summary><p>${esc(r.rules_text)}</p><p>${esc(r.spec_text)}</p></details></section>`;
+    return `<section class="panel"><div class="eyebrow">Step 1 · Rules · submitted ${dt(r.created_at)}</div><h1>${esc(r.title)}</h1>
+      <div class="req-grid">${r.requirements.map((x) => `<div class="req"><span class="ric">${ruleIcon(x)}</span><span>${esc(x)}</span></div>`).join('')}</div>
+      <div class="pills"><span class="pill">Max ${usd(r.bounds.max_amount_cents)} per transaction&nbsp;</span>${r.bounds.allowed_mti.map((m) => `<span class="chk"><span>${esc(m)} ${esc(MTI[m] || '')}</span></span>`).join('')}
+        <span class="pill">Auto follow-ups: <b>${r.bounds.auto_followups ? 'on' : 'off'}</b>&nbsp;</span><span class="pill">Replay: <b>${r.replay.enabled ? `${num(r.replay.sample_size)} TabFormer txns` : 'off'}</b>&nbsp;</span></div>
+      <details data-k="rules-src"><summary>Legacy rules and message spec</summary><p>${esc(r.rules_text)}</p><p class="mono" style="font-size:.8rem">${esc(r.spec_text)}</p></details></section>`;
   }
-  const reqs = [RULES.approve_purchase, RULES.decline_insufficient, RULES.reject_duplicate, RULES.reverse_approved].join('\n');
-  return `<form class="card" data-form="new-run"><h2>1 · Rules</h2><p class="muted">Describe what the new switch must do. Agents on Vultr Serverless Inference will propose tests; you approve every test before anything runs.</p>
-    <label for="f-title">Title</label><input id="f-title" name="title" type="text" required value="Core switch migration — Legacy v4 → NewSwitch v1">
-    <label for="f-req">Requirements</label><textarea id="f-req" name="requirements" rows="5" required>${esc(reqs)}</textarea><p class="hint">One rule per line.</p>
-    <label for="f-rules">Legacy rules (check order)</label><textarea id="f-rules" name="rules_text" rows="4">${esc(DEFAULT_RULES)}</textarea>
-    <label for="f-spec">Message spec</label><textarea id="f-spec" name="spec_text" rows="3">${esc(DEFAULT_SPEC)}</textarea>
-    <fieldset><legend>Bounds for agents</legend>
-      <label for="f-max">Maximum amount per transaction (USD)</label><input id="f-max" name="max_amount" type="number" min="1" step="0.01" value="1000.00" required>
-      <div role="group" aria-label="Allowed message types">${['0100', '0200', '0400'].map((m) => `<label class="inline"><input type="checkbox" name="mti" value="${m}" checked> ${m} ${MTI[m]}</label>`).join('')}</div>
-      <label class="inline"><input type="checkbox" name="auto" checked> Allow automatic follow-ups</label>
-      <p class="hint">The triage agent may run extra tests without asking again, but only inside these bounds.</p></fieldset>
-    <fieldset><legend>Transaction replay</legend>
-      <label class="inline"><input type="checkbox" name="replay" checked> Replay 2,000 transactions from IBM's public synthetic TabFormer benchmark</label>
-      <label for="f-sample">Sample size</label><input id="f-sample" name="sample" type="number" min="1" max="20000" value="2000"></fieldset>
-    <div class="row end"><button class="btn primary" type="submit" ${S.busy ? 'disabled' : ''}>Generate tests with Vultr AI</button></div></form>`;
+  const reqs = [RULES.approve_purchase, RULES.decline_insufficient, RULES.reject_duplicate, RULES.reverse_approved];
+  return `<form class="panel" data-form="new-run"><div class="eyebrow">Step 1 · Rules</div><h1>What must the new switch do?</h1>
+    <p class="muted">Agents on Vultr Serverless Inference turn these rules into ISO 8583 tests. You approve every test before anything runs.</p>
+    <label for="f-title" class="sr">Title</label><input id="f-title" name="title" type="text" required value="Core switch migration — Legacy v4 → NewSwitch v1" style="font-weight:600;margin-top:.6rem">
+    <div class="req-grid">${reqs.map((t, i) => `<label class="req"><span class="ric" aria-hidden="true">${ruleIcon(t)}</span><span class="sr">Rule ${i + 1}</span><textarea name="req" rows="2" ${i === 0 ? 'required' : ''}>${esc(t)}</textarea></label>`).join('')}
+      <label class="req add"><span class="ric" aria-hidden="true">+</span><span class="sr">Another rule</span><textarea name="req" rows="2" placeholder="Add another rule (optional)"></textarea></label></div>
+    <div class="pills">
+      <label class="pill">Max per transaction $<input name="max_amount" type="number" min="1" step="0.01" value="1000.00" required aria-label="Maximum amount per transaction in USD"></label>
+      ${['0100', '0200', '0400'].map((m) => `<label class="chk"><input type="checkbox" name="mti" value="${m}" checked><span>${m} ${MTI[m]}</span></label>`).join('')}
+      <label class="toggle"><input type="checkbox" name="auto" checked> Auto follow-ups</label>
+      <label class="toggle"><input type="checkbox" name="replay" checked> Replay</label>
+      <label class="pill"><input name="sample" type="number" min="1" max="20000" value="2000" aria-label="Replay sample size"> TabFormer txns</label></div>
+    <p class="hint">Auto follow-ups: the triage agent may run extra tests without asking again, but only inside these bounds. Replay uses IBM's public synthetic TabFormer benchmark.</p>
+    <details><summary>Legacy rules and message spec</summary>
+      <label for="f-rules">Legacy rules (check order)</label><textarea id="f-rules" name="rules_text" rows="4">${esc(DEFAULT_RULES)}</textarea>
+      <label for="f-spec">Message spec</label><textarea id="f-spec" name="spec_text" rows="3">${esc(DEFAULT_SPEC)}</textarea></details>
+    ${roLine()}<button class="cta" type="submit" ${dis(S.busy)}>Generate tests with Vultr AI <small>→ planner · generator</small></button></form>`;
 }
 
 function stepsList(c) {
-  return `<ol class="steps">${c.steps.map((s, i) => `<li>${esc(stepText(s, c.steps[i - 1]))} <span class="muted">→ expect</span> ${code(c.expected_codes[i])}</li>`).join('')}</ol>`;
+  return `<ol class="steps">${c.steps.map((s, i) => `<li>${esc(stepText(s, c.steps[i - 1]))} <span class="muted">→</span> ${code(c.expected_codes[i])}</li>`).join('')}</ol>`;
 }
 
 function caseCard(c, editable) {
@@ -357,76 +462,93 @@ function caseCard(c, editable) {
   const body = S.editing === c.id
     ? `<form data-form="case-edit" data-id="${id}">${c.steps.map((s, i) => `<div class="edit-row"><span class="muted">Step ${i + 1}</span>
         <label>Amount (USD)<input type="number" name="amt${i}" step="0.01" min="0.01" max="${S.run.bounds.max_amount_cents / 100}" value="${(s.amount_cents / 100).toFixed(2)}"></label>
-        <label>At t+ (seconds)<input type="number" name="gap${i}" step="0.1" min="0" value="${s.at_offset_s}"></label>
-        <label>Expected code<select name="code${i}">${Object.keys(CODES).map((k) => `<option value="${k}" ${k === c.expected_codes[i] ? 'selected' : ''}>${k} ${CODES[k]}</option>`).join('')}</select></label></div>`).join('')}
+        <label>At t+ (s)<input type="number" name="gap${i}" step="0.1" min="0" value="${s.at_offset_s}"></label>
+        <label>Expected<select name="code${i}">${Object.keys(CODES).map((k) => `<option value="${k}" ${k === c.expected_codes[i] ? 'selected' : ''}>${k} ${CODES[k]}</option>`).join('')}</select></label></div>`).join('')}
         <div class="row"><button class="btn small primary" type="submit">Save</button><button class="btn small" type="button" data-act="case-cancel">Cancel</button></div></form>`
     : stepsList(c);
-  return `<article class="case ${esc(c.status)}"><header><h4>${esc(c.title)}</h4>${badge(c.source)}<span class="chip st-${esc(c.status)}">${esc(c.status)}</span></header>
-    ${body}${c.rationale ? `<p class="why">${esc(c.rationale)}</p>` : ''}
-    ${editable && S.editing !== c.id ? `<div class="row"><button class="btn small ok" data-act="case-status" data-id="${id}" data-v="approved" ${pressed('approved')}>Approve</button>
-      <button class="btn small no" data-act="case-status" data-id="${id}" data-v="rejected" ${pressed('rejected')}>Reject</button>
-      <button class="btn small" data-act="case-edit" data-id="${id}">Edit</button></div>` : ''}</article>`;
+  return `<article class="case ${esc(c.status)}"><header><h4>${esc(c.title)}</h4>${badge(c.source)}</header>${body}
+    ${c.rationale ? `<p class="why">${esc(c.rationale)}</p>` : ''}
+    ${editable && S.editing !== c.id ? `<div class="row"><div class="seg" role="group" aria-label="Decision for ${id}">
+      <button class="ok" data-act="case-status" data-id="${id}" data-v="approved" ${pressed('approved')}>✓ Approve</button>
+      <button class="no" data-act="case-status" data-id="${id}" data-v="rejected" ${pressed('rejected')}>✗ Reject</button></div>
+      <button class="btn small" data-act="case-edit" data-id="${id}">Edit</button><span class="spacer"></span><span class="chip st-${esc(c.status)}">${esc(c.status)}</span></div>`
+      : `<div class="row"><span class="chip st-${esc(c.status)}">${esc(c.status)}</span></div>`}</article>`;
+}
+
+function ring(done, total) {
+  const R = 30, C = 2 * Math.PI * R, f = total ? done / total : 0;
+  return `<svg class="ring" width="78" height="78" viewBox="0 0 78 78" role="img" aria-label="${done} of ${total} tests decided">
+    <circle cx="39" cy="39" r="${R}" fill="none" stroke="var(--line2)" stroke-width="7"/>
+    <circle cx="39" cy="39" r="${R}" fill="none" stroke="${f === 1 ? 'var(--good)' : 'var(--vultr)'}" stroke-width="7" stroke-linecap="round" stroke-dasharray="${(C * f).toFixed(1)} ${C.toFixed(1)}" transform="rotate(-90 39 39)"/>
+    <text x="39" y="44" text-anchor="middle">${done}/${total}</text></svg>`;
 }
 
 function viewReview() {
   const r = S.run;
   if (!r) return empty('Start a new migration test to generate test cases.');
-  const cases = r.cases.filter((c) => c.source !== 'triage');
+  const cases = casesOf(r);
   if (!cases.length) {
-    return `<section class="card"><h2><span class="spin"></span> Agents are planning your tests on Vultr Serverless Inference…</h2>
+    return `<section class="panel"><div class="eyebrow">Step 2 · Approve</div><h1><span class="spin"></span> Vultr AI is planning your tests…</h1>
       <p class="muted">The coordinator asks the planner to break each rule into states, then the generator writes ISO 8583 test cases. Nothing runs yet.</p>
-      ${agentStrip()}${feed(S.events.slice(-14).reverse())}</section>`;
+      ${agentStrip()}${termlog(S.events.slice(-40), 'coordinator loop · Vultr Serverless Inference')}</section>`;
   }
-  const open = r.status === 'awaiting_approval', proposed = cases.filter((c) => c.status === 'proposed').length;
-  const n = (st) => cases.filter((c) => c.status === st).length;
-  const groups = [...new Set(cases.map((c) => c.rule))];
+  const open = r.status === 'awaiting_approval', edit = open && canAct(), n = (st) => cases.filter((c) => c.status === st).length, proposed = n('proposed');
+  const unlocked = proposed === 0, groups = [...new Set(cases.map((c) => c.rule))];
   const label = (rule) => r.plan.find((p) => p.rule === rule)?.description || RULES[rule] || rule;
-  return `<div class="banner gate">${lock}<div><b>Nothing runs until every test is approved or rejected.</b>
-      <div class="muted">${n('approved')} approved · ${n('rejected')} rejected · ${proposed} waiting · Replay: ${r.replay.enabled ? `${num(r.replay.sample_size)} TabFormer transactions (switched on by you)` : 'off'}</div></div>
-      <span class="spacer"></span>${open ? `<button class="btn" data-act="approve-all" ${S.busy || !proposed ? 'disabled' : ''}>Approve all</button>
-      <button class="btn primary" data-act="execute" ${S.busy || proposed ? 'disabled' : ''} title="${proposed ? 'Approve or reject every test first' : ''}">Run approved tests in sandboxes</button>` : `<span class="chip">${esc(STATUS_LABEL[r.status])}</span>`}</div>
-    ${groups.map((g) => `<h3 class="rule-h">${esc(label(g))}</h3>${cases.filter((c) => c.rule === g).map((c) => caseCard(c, open)).join('')}`).join('')}`;
+  return `<section class="panel gate ${unlocked ? 'unlocked' : ''}">${ring(cases.length - proposed, cases.length)}
+      <span class="lockbig">${LOCK(unlocked, 34)}</span>
+      <div style="flex:1;min-width:15rem"><div class="eyebrow">Step 2 · Human gate</div><h2>${unlocked ? 'Every test decided. The gate is open.' : 'Nothing runs until every test is decided'}</h2>
+        <p class="muted">${n('approved')} approved · ${n('rejected')} rejected · ${proposed} waiting · Replay: ${r.replay.enabled ? `${num(r.replay.sample_size)} TabFormer transactions (switched on by you)` : 'off'}</p></div>
+      ${open ? `<div class="row"><button class="btn" data-act="approve-all" ${dis(S.busy || !proposed)}>Approve all</button>
+        <button class="btn primary ${unlocked && canAct() ? 'glow' : ''}" data-act="execute" ${dis(S.busy || proposed)}>${LOCK(unlocked, 14)} Run approved tests in sandboxes</button></div>`
+        : `<span class="chip">${esc(STATUS_LABEL[r.status])}</span>`}</section>${open ? roLine() : ''}
+    ${groups.map((g) => `<h3 class="group-h"><span class="ric" aria-hidden="true">${ruleIcon(label(g))}</span>${esc(label(g))}<span class="chip">${cases.filter((c) => c.rule === g).length} tests</span></h3>
+      <div class="case-grid">${cases.filter((c) => c.rule === g).map((c) => caseCard(c, edit)).join('')}</div>`).join('')}`;
 }
 
 function viewRun() {
   const r = S.run;
   if (!r) return empty('No run selected.');
-  if (stage(r.status) < stage('running')) return empty('The sandbox run starts after you approve the tests in step 2.');
-  const c = r.counts, planned = r.cases.filter((x) => x.status === 'approved' && x.source !== 'triage').length + (r.replay.enabled ? r.replay.sample_size : 0);
+  if (stage(r.status) < stage('running')) return empty(`${LOCK(false, 14)} The sandbox run starts after every test in step 2 is decided.`);
+  const c = r.counts, planned = casesOf(r).filter((x) => x.status === 'approved').length + (r.replay.enabled ? r.replay.sample_size : 0);
   const pct = r.status === 'running' ? Math.min(100, (100 * c.total) / Math.max(1, planned)) : 100;
-  const tile = (p) => `<div class="tile"><b>${esc(p.sandbox_id)}</b>${esc(runtimeLabel(p.runtime))}<br>host ${esc(p.hostname)} · network ${esc(p.network)}<br>${r.status === 'running' && p === r.proofs.at(-1) ? '<span class="spin"></span> running' : '<span class="good">destroyed ✓</span>'}</div>`;
-  return `${findingBanner()}
-    <div class="counters">
-      <div class="counter"><div class="num">${num(c.total)}</div><small>tests executed</small></div>
-      <div class="counter good"><div class="num">${num(c.passed)}</div><small>✓ passed</small></div>
-      <div class="counter bad"><div class="num">${num(c.regression)}</div><small>✗ regressions (new differs from old)</small></div>
-      <div class="counter"><div class="num">${num(c.error)}</div><small>errors · ${num(c.noise)} noise · ${num(c.both_wrong)} both wrong</small></div></div>
+  const tile = (p) => {
+    const st = r.status === 'running' && p === r.proofs.at(-1) ? 'running' : 'destroyed';
+    return `<div class="tile ${st} ${S.seen.has(p.sandbox_id) ? '' : 'spawn'}"><span class="sid">${esc(p.sandbox_id)}</span>
+      <span class="badge ${p.runtime === 'runsc' ? 'vultr' : 'warn'}">${p.runtime === 'runsc' ? 'gVisor pod' : 'local-unsafe (dev)'}</span>
+      <span class="muted">net ${esc(p.network)}${k8s() ? ' · egress denied' : ''}</span>
+      <span>${st === 'running' ? '<i class="pulse"></i> running' : '<span class="good">✓ destroyed</span>'}</span></div>`;
+  };
+  const lane = (pool, title, sub) => { const ps = r.proofs.filter((p) => poolOf(p) === pool);
+    return `<div class="lane lane-${pool}"><h4>${title} <span class="muted">· ${sub}</span></h4><div class="tiles">${ps.map(tile).join('') || `<p class="muted">${pool === 'data' && !r.replay.enabled ? 'Replay is off for this run.' : 'Scheduling…'}</p>`}</div></div>`; };
+  const counter = (n, label, cls = '') => `<div class="counter ${cls}"><div class="big">${num(n)}</div><small>${label}</small></div>`;
+  return `${findingBanner()}${heroBlock()}
+    <div class="counters">${counter(c.total, 'tests executed')}${counter(c.passed, '✓ passed', 'good')}${counter(c.regression, '✗ regressions · new differs from old', c.regression ? 'bad' : '')}${counter(c.error, `errors · ${num(c.noise)} noise · ${num(c.both_wrong)} both wrong`)}</div>
     <div class="progress" role="progressbar" aria-valuenow="${Math.round(pct)}" aria-valuemin="0" aria-valuemax="100" aria-label="Run progress"><div style="width:${pct}%"></div></div>
-    <p class="muted">${r.status === 'running' ? `<span class="spin"></span> Running ${num(c.total)} of about ${num(planned)} in throwaway gVisor sandboxes on the sandbox VM` : r.status === 'triaging' ? '<span class="spin"></span> Triage agent is running follow-ups inside your bounds' : 'Run complete.'} · ${num(r.sandboxes_used)} sandboxes used</p>
-    <div class="grid2"><section class="card"><h3>Sandboxes</h3><div class="tiles">${r.proofs.map(tile).join('') || '<p class="muted">Starting…</p>'}</div></section>
-      <section class="card"><h3>Agents</h3>${agentStrip()}${feed(S.events.slice(-40).reverse())}</section></div>`;
+    <p class="progress-lbl">${r.status === 'running' ? `Running ${num(c.total)} of about ${num(planned)} ${k8s() ? 'as throwaway gVisor Jobs on Vultr Kubernetes Engine' : 'in throwaway sandboxes'}` : r.status === 'triaging' ? 'Triage agent is running follow-ups inside your bounds' : 'Run complete'} · ${num(r.sandboxes_used)} sandboxes used</p>
+    <section class="panel"><div class="row"><h3 style="margin:0">${k8s() ? 'gVisor pods' : 'Sandboxes'}</h3><span class="muted">one ${k8s() ? 'Job' : 'sandbox'} per batch, deleted after</span></div>
+      <div class="lanes">${lane('agent', 'Agent sandboxes', 'agent-written tests')}${WALL}${lane('data', 'Data sandboxes', 'replay data, no agent code')}</div></section>
+    <section class="panel"><h3>Agents</h3>${agentStrip()}${termlog(S.events.slice(-60), `run ${r.id}`)}</section>`;
 }
 
 function boundaryChart(items) {
-  // Only pure retries (same card, amount and STAN, differing only in time) belong on the gap axis.
   const retry = (st) => st.length === 2 && st[0].pan === st[1].pan && st[0].amount_cents === st[1].amount_cents && st[0].stan === st[1].stan;
   const pts = items.filter((x) => retry(x.case.steps) && x.result.steps.length === 2).map((x) => {
     const st = x.case.steps, rs = x.result.steps.at(-1);
-    return { gap: st.at(-1).at_offset_s - st[0].at_offset_s, old: rs.old_a_code, neu: rs.new_code, reg: x.result.verdict === 'regression' };
+    return { gap: st[1].at_offset_s - st[0].at_offset_s, old: rs.old_a_code, neu: rs.new_code, reg: x.result.verdict === 'regression' };
   }).sort((a, b) => a.gap - b.gap);
   if (!pts.length) return '';
-  const W = 660, L = 120, dx = (W - L - 30) / Math.max(1, pts.length - 1), X = (i) => L + i * dx;
-  const fill = (cd, reg) => (reg ? 'var(--bad)' : cd === '94' ? 'var(--blue)' : 'var(--gray)');
-  const node = (i, y, cd, reg) => `<circle cx="${X(i)}" cy="${y}" r="17" fill="${fill(cd, reg)}"/><text x="${X(i)}" y="${y + 4}" text-anchor="middle" font-size="12" font-weight="700" style="fill:#fff">${esc(cd)}</text>${reg ? `<text x="${X(i)}" y="${y - 23}" text-anchor="middle" font-size="13" style="fill:var(--bad)">✗</text>` : ''}`;
-  const b = pts.findIndex((p, i) => p.reg && (i === 0 || !pts[i - 1].reg));
-  const bx = b > 0 ? (X(b) + X(b - 1)) / 2 : null;
-  return `<figure><svg viewBox="0 0 ${W} 210" width="100%" role="img" aria-label="Retry gap versus response code. ${esc(pts.map((p) => `${secs(p.gap)} seconds: old ${p.old}, new ${p.neu}`).join('; '))}">
+  const W = 700, L = 128, dx = (W - L - 30) / Math.max(1, pts.length - 1), X = (i) => L + i * dx;
+  const fill = (cd, reg) => (reg ? 'var(--bad)' : cd === '94' ? 'var(--vultr)' : 'var(--faint)');
+  const node = (i, y, cd, reg) => `<circle cx="${X(i)}" cy="${y}" r="17" fill="${fill(cd, reg)}"/><text x="${X(i)}" y="${y + 4}" text-anchor="middle" font-size="12" font-weight="700" style="fill:#fff" class="t-mono">${esc(cd)}</text>${reg ? `<text x="${X(i)}" y="${y - 23}" text-anchor="middle" font-size="13" style="fill:var(--bad)">✗</text>` : ''}`;
+  const b = pts.findIndex((p, i) => p.reg && (i === 0 || !pts[i - 1].reg)), bx = b > 0 ? (X(b) + X(b - 1)) / 2 : null;
+  return `<figure><svg viewBox="0 0 ${W} 212" width="100%" role="img" aria-label="Retry gap versus response code. ${esc(pts.map((p) => `${secs(p.gap)} seconds: old ${p.old}, new ${p.neu}`).join('; '))}">
     <text x="10" y="74" font-size="13" font-weight="600">New switch</text><text x="10" y="134" font-size="13" font-weight="600">Legacy (Old A)</text>
-    <line class="axis" x1="${L - 20}" x2="${W - 10}" y1="100" y2="100"/>
+    <line class="ln" x1="${L - 20}" x2="${W - 10}" y1="100" y2="100"/>
     ${bx ? `<line x1="${bx}" x2="${bx}" y1="30" y2="165" stroke="var(--bad)" stroke-dasharray="5 4"/><text x="${bx + 6}" y="26" font-size="12" style="fill:var(--bad)">boundary: approved at ≥ ${secs(pts[b].gap)} s</text>` : ''}
-    ${pts.map((p, i) => node(i, 70, p.neu, p.reg) + node(i, 130, p.old, false) + `<text class="muted-t" x="${X(i)}" y="186" text-anchor="middle" font-size="12">${secs(p.gap)} s</text>`).join('')}
-    <text class="muted-t" x="${(L + W) / 2}" y="206" text-anchor="middle" font-size="12">Retry gap (seconds between the two identical purchases)</text></svg>
-    <figcaption>Blue <b>94</b> = duplicate rejected · grey <b>00</b> = approved as a new purchase · red <b>00 ✗</b> = new switch approved what the legacy switch rejected. Triage follow-ups ran automatically inside your bounds.</figcaption></figure>`;
+    ${pts.map((p, i) => node(i, 70, p.neu, p.reg) + node(i, 130, p.old, false) + `<text class="t-muted t-mono" x="${X(i)}" y="186" text-anchor="middle" font-size="12">${secs(p.gap)} s</text>`).join('')}
+    <text class="t-muted" x="${(L + W) / 2}" y="208" text-anchor="middle" font-size="12">Retry gap (seconds between two identical purchases)</text></svg>
+    <figcaption>Blue <b>94</b> = duplicate rejected · grey <b>00</b> = approved as a new purchase · red <b>00 ✗</b> = new switch approved what the legacy switch rejected. Triage ran these follow-ups automatically inside your bounds.</figcaption></figure>`;
 }
 
 function resultDetail(x) {
@@ -435,28 +557,27 @@ function resultDetail(x) {
   const summary = res.error ? `The test errored: ${res.error}`
     : bad ? `Step ${bad.index + 1}: the rules expect ${bad.expected_code} ${CODES[bad.expected_code] || ''}. Old A returned ${bad.old_a_code}, Old B returned ${bad.old_b_code}, and the new switch returned ${bad.new_code} ${CODES[bad.new_code] || ''}.`
       : 'All three switches returned the expected codes.';
-  const cell = (v, exp) => (v === exp ? `<td class="match">✓ <b class="mono">${esc(v)}</b></td>` : `<td class="mis">✗ ${code(v)}</td>`);
+  const cell = (v, exp) => (v === exp ? `<td class="match">✓ ${esc(v)}</td>` : `<td class="mis">✗ ${code(v)}</td>`);
   const bd = res.balance_delta_cents || {};
   const impact = Object.keys(bd.old_a || {}).map((pan) => {
-    const o = bd.old_a[pan], nw = bd.new?.[pan] ?? 0, d = nw - o;
-    const v = d < 0 ? `<strong class="bad">✗ Customer overcharged ${usd(-d)}</strong>` : d > 0 ? `<strong class="bad">✗ Customer credited ${usd(d)} too much</strong>` : '<span class="good">✓ Same balance impact</span>';
-    return `<p>Card ${mask(pan)} · Old switch: ${usd(o, true)} · New switch: ${usd(nw, true)} · ${v}</p>`;
+    const o = bd.old_a[pan], nw = bd.new?.[pan] ?? 0, d = nw - o, max = Math.max(Math.abs(o), Math.abs(nw), 1);
+    const row = (label, v, cls) => `<div class="bar-row ${cls}"><span>${label}</span><div class="bar"><i style="width:${((100 * Math.abs(v)) / max).toFixed(1)}%"></i></div><b>${usd(v, true)}</b></div>`;
+    return `<p class="muted" style="margin:.2rem 0">Card ${mask(pan)}</p><div class="bars">${row('Old switch', o, '')}${row('New switch', nw, d !== 0 ? 'bad' : '')}</div>
+      <p>${d < 0 ? `<span class="overcharge">✗ Customer overcharged ${usd(-d)}</span>` : d > 0 ? `<span class="overcharge">✗ Customer credited ${usd(d)} too much</span>` : '<span class="good">✓ Same balance impact</span>'}</p>`;
   }).join('');
   const fmt = (k, v) => (k === '2' ? mask(v) : k === '4' ? `${v} (${usd(+v)})` : k === 't' ? `${v} (${MTI[v] || ''})` : k === '49' && v === '840' ? '840 (USD)' : k === '39' ? `${v} ${CODES[v] || ''}` : v);
   const hex = (h) => esc((h || '').match(/.{1,2}/g)?.join(' ') || '');
-  const p = S.run.proofs[0];
-  return `<h3>${esc(c.title)}</h3><div class="row">${verdictChip(res.verdict)}${badge(c.source)}<span class="chip">${esc(RULES[c.rule] || c.rule)}</span></div>
+  const want = c.source === 'dataset' ? 'data' : 'agent', p = S.run.proofs.find((x) => poolOf(x) === want) || S.run.proofs[0];
+  return `<div class="row"><h2 style="margin:0">${esc(c.title)}</h2>${verdictChip(res.verdict)}${badge(c.source)}</div>
     <p>${esc(summary)}</p>${c.rationale ? `<p class="why">${esc(c.rationale)}</p>` : ''}
     <div class="tbl-wrap"><table><thead><tr><th>#</th><th>Step</th><th>Expected</th><th>Old A</th><th>Old B</th><th>New</th></tr></thead><tbody>
-    ${res.steps.map((s) => `<tr><td>${s.index + 1}</td><td class="stepc">${esc(stepText(c.steps[s.index] || {}, c.steps[s.index - 1]))}</td><td>${code(s.expected_code)}</td>${cell(s.old_a_code, s.expected_code)}${cell(s.old_b_code, s.expected_code)}${cell(s.new_code, s.expected_code)}</tr>`).join('')}
+    ${res.steps.map((s) => `<tr><td class="mono">${s.index + 1}</td><td class="stepc">${esc(stepText(c.steps[s.index] || {}, c.steps[s.index - 1]))}</td><td>${code(s.expected_code)}</td>${cell(s.old_a_code, s.expected_code)}${cell(s.old_b_code, s.expected_code)}${cell(s.new_code, s.expected_code)}</tr>`).join('')}
     </tbody></table></div>
-    <div class="impact"><b>Balance impact</b>${impact || '<p class="muted">No balance data.</p>'}</div>
+    <h3 style="margin-top:.8rem">Balance impact</h3>${impact || '<p class="muted">No balance data.</p>'}
     <details data-k="raw-${esc(c.id)}"><summary>Raw ISO 8583 messages</summary>${res.steps.map((s) => `<h4>Step ${s.index + 1}</h4>
       <div class="tbl-wrap"><table><tbody>${Object.entries(s.request_fields).map(([k, v]) => `<tr><th>${esc(k === 't' ? 'MTI' : 'Field ' + k)}</th><td>${esc(FIELD[k] || '')}</td><td class="mono">${esc(fmt(k, v))}</td></tr>`).join('')}</tbody></table></div>
-      <p class="muted">Request (hex, card digits included; synthetic test card)</p><pre>${hex(s.request_hex)}</pre>
-      <p class="muted">New switch response (hex)</p><pre>${hex(s.new_response_hex)}</pre>`).join('')}</details>
-    ${p ? `<p class="muted">Sandbox proof: executed in ${esc(runtimeLabel(p.runtime))}, network ${esc(p.network)}, read-only root ${p.readonly_rootfs ? '✓' : '✗'}; kernel seen from inside: <span class="mono">${esc(p.uname)}</span></p>` : ''}
-    <p class="muted">Took ${num(res.duration_ms)} ms.</p>`;
+      <p class="muted">Request (hex; synthetic test card)</p><pre>${hex(s.request_hex)}</pre><p class="muted">New switch response (hex)</p><pre>${hex(s.new_response_hex)}</pre>`).join('')}</details>
+    ${p ? `<p class="muted" style="font-size:.82rem">Sandbox proof (${poolOf(p)} pool, <span class="mono">${esc(p.sandbox_id)}</span>): ${esc(runtimeLabel(p.runtime))} · network ${esc(netLabel(p.network))} · read-only root ${p.readonly_rootfs ? '✓' : '✗'} · kernel seen from inside <span class="mono">${esc(p.uname)}</span> · ${num(res.duration_ms)} ms</p>` : ''}`;
 }
 
 function viewEvidence() {
@@ -464,48 +585,67 @@ function viewEvidence() {
   if (!r) return empty('No run selected.');
   if (stage(r.status) < stage('running')) return empty('Evidence appears once approved tests have run.');
   if (!S.results) { loadResults(); return empty('<span class="spin"></span> Loading results…'); }
-  const sel = S.results.find((x) => x.case.id === S.sel);
-  const gh = r.github || {};
+  const sel = S.results.find((x) => x.case.id === S.sel), gh = r.github || {};
   const filters = ['regression', 'error', 'noise', 'both_wrong', 'pass', 'all'];
-  return `${findingBanner()}<div class="grid-ev"><section class="card"><label for="f-verdict">Show</label>
+  const links = [gh.issue_url && `<a href="${esc(safeUrl(gh.issue_url))}" target="_blank" rel="noopener">GitHub issue · ${esc(gh.issue_url.replace('https://github.com/', ''))}</a>`,
+    gh.evidence_url && `<a class="vultr" href="${esc(safeUrl(gh.evidence_url))}" target="_blank" rel="noopener">Evidence bundle on Vultr Object Storage</a>`, gateChip(gh.status_state)].filter(Boolean).join('');
+  return `${findingBanner()}<div class="split"><aside class="panel"><label for="f-verdict">Show</label>
       <select id="f-verdict" data-change="verdict">${filters.map((v) => `<option value="${v}" ${v === S.verdict ? 'selected' : ''}>${esc({ both_wrong: 'both wrong', all: 'all results' }[v] || v)}</option>`).join('')}</select>
-      <ul class="rlist">${S.results.map((x) => `<li><button data-act="sel" data-id="${esc(x.case.id)}" aria-current="${x.case.id === S.sel}">${esc(x.case.title)}<small>${verdictChip(x.result.verdict)} ${esc(SRC[x.case.source] || x.case.source)}</small></button></li>`).join('') || '<li class="muted">None.</li>'}</ul></section>
-    <section class="card">${sel ? resultDetail(sel) : '<p class="muted">Select a result.</p>'}</section></div>
-    ${S.triageResults?.length ? `<section class="card"><h3>Triage follow-ups: where does it break?</h3>${boundaryChart(S.triageResults)}</section>` : ''}
-    ${r.triage ? `<section class="card"><div class="row"><h3>Triage report</h3><span class="chip v-regression">severity: ${esc(r.triage.severity)}</span><span class="chip">money at risk ${usd(r.triage.money_at_risk_cents)}</span></div>
-      <div class="md">${md(r.triage.summary_md)}</div><p><b>Root-cause hypothesis:</b> ${esc(r.triage.root_cause_hypothesis)}</p></section>` : ''}
-    ${gh.issue_url || gh.status_state ? `<section class="card row"><b>GitHub</b>${gh.issue_url ? `<a href="${esc(safeUrl(gh.issue_url))}" target="_blank" rel="noopener">${esc(gh.issue_url.replace('https://github.com/', ''))}</a>` : ''}${gateChip(gh.status_state)}</section>` : ''}`;
+      <ul class="rlist" data-keep="rlist">${S.results.map((x) => `<li><button data-act="sel" data-id="${esc(x.case.id)}" aria-current="${x.case.id === S.sel}">${esc(x.case.title)}<small>${verdictChip(x.result.verdict)}<span class="muted">${esc(SRC[x.case.source] || x.case.source)}</span></small></button></li>`).join('') || '<li class="muted">None.</li>'}</ul></aside>
+    <div>${heroBlock()}<section class="panel">${sel ? resultDetail(sel) : '<p class="muted">Select a result.</p>'}${links ? `<div class="links" style="margin-top:.6rem">${links}</div>` : ''}</section></div></div>
+    ${S.triageResults?.length ? `<section class="panel"><div class="eyebrow">Triage follow-ups</div><h2>Where does it break?</h2>${boundaryChart(S.triageResults)}</section>` : ''}
+    ${r.triage ? `<section class="panel"><div class="row"><h2 style="margin:0">Triage report</h2><span class="chip v-regression">severity: ${esc(r.triage.severity)}</span><span class="chip">money at risk ${usd(r.triage.money_at_risk_cents)}</span></div>
+      <div class="md">${md(r.triage.summary_md)}</div><p><b>Root-cause hypothesis:</b> ${esc(r.triage.root_cause_hypothesis)}</p></section>` : ''}`;
 }
 
 function viewDecision() {
   const r = S.run;
   if (!r) return empty('No run selected.');
   const gh = r.github || {};
+  const sso = S.me?.auth === 'netbird';
   if (r.decision) {
     const block = r.decision.decision === 'block';
-    return `<div class="banner big ${block ? 'danger' : 'success'}" role="status">${block ? '✗ Migration blocked' : '✓ Release approved'} · by ${esc(r.decision.reviewer)} · ${dt(r.decision.ts)} · GitHub check: ${esc(gh.status_state || (block ? 'failure' : 'success'))}</div>
-      ${r.decision.note ? `<section class="card"><b>Reviewer note</b><p>${esc(r.decision.note)}</p></section>` : ''}
-      <section class="card"><p>${num(r.counts.total)} tests · ${num(r.counts.regression)} regressions · ${num(r.sandboxes_used)} gVisor sandboxes, all destroyed.</p>
-      ${gh.issue_url ? `<p><a href="${esc(safeUrl(gh.issue_url))}" target="_blank" rel="noopener">Open the GitHub issue</a> ${gateChip(gh.status_state)}</p>` : ''}</section>`;
+    return `<section class="panel stampwrap"><div class="stamp ${block ? 'bad' : 'good'}" role="status">${block ? 'MIGRATION BLOCKED' : 'RELEASE APPROVED'}</div>
+      <div class="stampmeta"><span class="chip">${block ? 'Blocked' : 'Approved'} by ${esc(r.decision.reviewer)}${sso ? ' · authenticated by NetBird SSO' : ''}</span><span class="chip">${dt(r.decision.ts)}</span>${gateChip(gh.status_state || (block ? 'failure' : 'success'))}</div>
+      ${r.decision.note ? `<p class="muted" style="max-width:40rem">“${esc(r.decision.note)}”</p>` : ''}
+      <p>${num(r.counts.total)} tests · ${num(r.counts.regression)} regressions · ${num(r.sandboxes_used)} sandboxes, all destroyed</p>${S.shareWas ? '<p class="muted">Reviewer link closed: it died with the decision.</p>' : ''}
+      <div class="links">${gh.issue_url ? `<a href="${esc(safeUrl(gh.issue_url))}" target="_blank" rel="noopener">GitHub issue</a>` : ''}${gh.evidence_url ? `<a class="vultr" href="${esc(safeUrl(gh.evidence_url))}" target="_blank" rel="noopener">Evidence bundle on Vultr Object Storage</a>` : ''}</div></section>`;
   }
   if (r.status !== 'awaiting_decision') return empty('The decision opens after the sandbox run and triage finish.');
-  return `<form class="card" data-form="decision"><h2>5 · Decision</h2>
-    <p>${num(r.counts.total)} tests · <b class="bad">${num(r.counts.regression)} regressions</b> · ${num(r.counts.error)} errors${r.triage ? ` · triage severity <b>${esc(r.triage.severity)}</b> · money at risk ${usd(r.triage.money_at_risk_cents)}` : ''}</p>
-    <p>${gateChip(gh.status_state)}</p>
-    <label for="f-rev">Reviewer name</label><input id="f-rev" name="reviewer" type="text" required autocomplete="name">
-    <label for="f-note">Note</label><textarea id="f-note" name="note" rows="3" placeholder="Why this decision?"></textarea>
-    <div class="row"><button class="btn danger" type="submit" name="d" value="block" ${S.busy ? 'disabled' : ''}>Block migration</button>
-      <button class="btn" type="submit" name="d" value="approve" ${S.busy ? 'disabled' : ''}>Approve release</button></div></form>`;
+  return `<form class="panel" data-form="decision"><div class="eyebrow">Step 5 · Decision</div><h1>Ship NewSwitch v1?</h1>
+    <p>${num(r.counts.total)} tests · <b class="bad">${num(r.counts.regression)} regressions</b> · ${num(r.counts.error)} errors${r.triage ? ` · severity <b>${esc(r.triage.severity)}</b> · money at risk <b>${usd(r.triage.money_at_risk_cents)}</b>` : ''} ${gateChip(gh.status_state)}</p>
+    <div class="decide-in"><label>Reviewer${sso && S.me.user ? ' · NetBird SSO' : ' name'}<input name="reviewer" type="text" required autocomplete="name" ${sso && S.me.user ? `value="${esc(S.me.user)}" readonly` : ''}></label><label>Note<input name="note" type="text" placeholder="Why this decision?"></label></div>
+    ${roLine()}<div class="bigbtns"><button class="bigbtn block" type="submit" name="d" value="block" ${dis(S.busy)}><b>Block migration</b><small>GitHub gate → failure</small></button>
+      <button class="bigbtn" type="submit" name="d" value="approve" ${dis(S.busy)}><b>Approve release</b><small>GitHub gate → success</small></button></div></form>${shareBlock()}`;
+}
+
+async function loadShare() {
+  S.share = null;
+  try { S.share = await api('GET', `/api/runs/${S.run.id}/share`); } catch { S.share = { active: false }; } // 404 on older backends
+  if (S.share?.active) S.shareWas = true;
+  render(true);
+}
+function shareBlock() {
+  if (MODE === 'snapshot') return '';
+  if (S.share === undefined) { loadShare(); return ''; }
+  const sh = S.share || {}, note = '<p class="hint">Link dies automatically when you block or approve — powered by netbird expose</p>';
+  return `<section class="panel share"><div class="row"><span class="vm-ic">${SHIELD}</span><div style="flex:1"><div class="eyebrow">NetBird · lifecycle-bound</div><h3 style="margin:0">Temporary reviewer link</h3></div>
+    ${sh.active ? `<button class="btn small" data-act="share-close" ${dis(S.busy)}>Close link now</button>` : `<button class="btn" data-act="share-create" ${dis(S.busy)}>Create temporary reviewer link</button>`}</div>
+    ${sh.active ? `<dl class="kv" style="margin-top:.6rem"><div><dt>URL</dt><dd><a href="${esc(safeUrl(sh.url))}" target="_blank" rel="noopener">${esc(sh.url)}</a></dd></div>
+      <div><dt>PIN</dt><dd class="pin">${sh.pin ? esc(sh.pin) : 'shown to testers only'}</dd></div><div><dt>Expires</dt><dd>${esc(sh.expires || 'when the decision is recorded')}</dd></div></dl>` : '<p class="muted">Let a colleague review this run over NetBird with a PIN, without opening any port.</p>'}${note}</section>`;
 }
 
 function diagram() {
-  const others = ['planner', 'generator', 'executor', 'triage', 'reporter', 'rl', 'human'], cx = 190, cy = 125;
+  const others = ['planner', 'generator', 'executor', 'triage', 'reporter', 'rl', 'human'], cx = 200, cy = 130;
   const lastConv = [...S.events].reverse().find((e) => e.to_agent && CONV_KINDS.includes(e.kind));
   const hot = lastConv && (lastConv.agent === 'coordinator' ? lastConv.to_agent : lastConv.agent);
-  const pos = others.map((a, i) => { const t = (i / others.length) * 2 * Math.PI - Math.PI / 2; return [a, cx + 150 * Math.cos(t), cy + 95 * Math.sin(t)]; });
-  return `<svg viewBox="0 0 380 250" width="100%" style="max-width:460px" role="img" aria-label="Coordinator in the centre connected to each agent and the human${hot ? `; active link: coordinator and ${esc(hot)}` : ''}">
-    ${pos.map(([a, x, y]) => `<line x1="${cx}" y1="${cy}" x2="${x}" y2="${y}" stroke="${a === hot ? col(a) : 'var(--line)'}" stroke-width="${a === hot ? 4 : 2}" ${a === hot ? '' : 'stroke-dasharray="4 4"'}/>`).join('')}
-    ${[['coordinator', cx, cy], ...pos].map(([a, x, y]) => `<circle cx="${x}" cy="${y}" r="${a === 'coordinator' ? 26 : 18}" fill="${col(a)}"/><text x="${x}" y="${y + 4}" text-anchor="middle" font-size="11" font-weight="700" style="fill:#fff">${esc(a.slice(0, 2).toUpperCase())}</text><text x="${x}" y="${y + (a === 'coordinator' ? 42 : 32)}" text-anchor="middle" font-size="11">${esc(nm(a))}</text>`).join('')}</svg>`;
+  const pos = others.map((a, i) => { const t = (i / others.length) * 2 * Math.PI - Math.PI / 2; return [a, cx + 158 * Math.cos(t), cy + 98 * Math.sin(t)]; });
+  const hp = pos.find(([a]) => a === hot);
+  const pkt = hp && !reduced() ? (() => { const out = lastConv.agent === 'coordinator'; const d = out ? `M${cx} ${cy} L${hp[1]} ${hp[2]}` : `M${hp[1]} ${hp[2]} L${cx} ${cy}`;
+    return `<circle r="5" class="pkt"><animateMotion dur="1.2s" repeatCount="indefinite" path="${d}"/></circle>`; })() : '';
+  return `<svg viewBox="0 0 400 262" width="100%" style="max-width:480px" role="img" aria-label="Coordinator in the centre connected to each agent and the human${hot ? `; active link: coordinator and ${esc(hot)}` : ''}">
+    ${pos.map(([a, x, y]) => `<line x1="${cx}" y1="${cy}" x2="${x}" y2="${y}" class="spoke ${a === hot ? 'hot' : ''}"/>`).join('')}${pkt}
+    ${[['coordinator', cx, cy], ...pos].map(([a, x, y]) => `<circle cx="${x}" cy="${y}" r="${a === 'coordinator' ? 27 : 19}" fill="${col(a)}" ${a === hot ? 'stroke="var(--cyan)" stroke-width="3"' : ''}/><text x="${x}" y="${y + 4}" text-anchor="middle" font-size="11" font-weight="800" style="fill:#0a1020" class="t-mono">${esc(a.slice(0, 2).toUpperCase())}</text><text x="${x}" y="${y + (a === 'coordinator' ? 42 : 33)}" text-anchor="middle" font-size="11">${esc(nm(a))}</text>`).join('')}</svg>`;
 }
 
 function convRow(e) {
@@ -523,106 +663,186 @@ function viewAgents() {
   const evs = S.events.filter((e) => CONV_KINDS.includes(e.kind) && (!S.convAgent || e.agent === S.convAgent || e.to_agent === S.convAgent) && (S.showLLM || e.kind !== 'llm_call'));
   let loop = null;
   const rows = evs.map((e) => { let d = ''; if (e.loop_iter != null && e.loop_iter !== loop) { loop = e.loop_iter; d = `<li class="divider">Loop iteration ${loop}</li>`; } return d + convRow(e); }).join('');
-  return `<div class="grid2"><section class="card"><h3>Who talks to whom</h3>${diagram()}</section>
-    <section class="card"><h3>Roster</h3><div class="roster">${S.agents.map((a) => `<div class="agent" style="--c:${col(a.name)}"><h4><i class="dot ${esc(a.state)}"></i>${esc(nm(a.name))}</h4>
-      <div class="muted">${esc(a.role)}</div><div><span class="chip">${a.model ? `Vultr · ${esc(a.model)}` : 'CPU · no LLM'}</span></div>
-      <div>${esc(a.state.replace('_', ' '))} · ${num(a.llm_calls)} LLM calls · ${num(a.tokens)} tokens</div><div class="last">${esc(a.last_message)}</div></div>`).join('')}</div></section></div>
-    <section class="card"><div class="row"><h3>Conversation</h3><span class="spacer"></span>
-      <label class="inline">Agent <select data-change="conv-agent" style="width:auto"><option value="">All</option>${[...AGENTS, 'human'].map((a) => `<option ${a === S.convAgent ? 'selected' : ''}>${a}</option>`).join('')}</select></label>
-      <label class="inline"><input type="checkbox" data-change="show-llm" ${S.showLLM ? 'checked' : ''}> Show raw LLM calls</label></div>
+  return `<div class="grid2"><section class="panel"><div class="eyebrow">Agents</div><h2>Who talks to whom</h2>${diagram()}</section>
+    <section class="panel"><h2>Roster</h2><div class="roster">${S.agents.map((a) => `<div class="agent" style="--c:${col(a.name)}"><h4><i class="dot ${esc(a.state)}"></i>${esc(nm(a.name))}</h4>
+      <div class="muted">${esc(a.role)}</div><div style="margin:.25rem 0"><span class="badge ${a.model ? 'vultr' : ''}">${a.model ? `Vultr · ${esc(a.model)}` : 'CPU · no LLM'}</span></div>
+      <div class="mono" style="font-size:.74rem">${esc(a.state.replace('_', ' '))} · ${num(a.llm_calls)} calls · ${num(a.tokens)} tok</div><div class="last">${esc(a.last_message)}</div></div>`).join('')}</div></section></div>
+    <section class="panel"><div class="row"><h2 style="margin:0">Conversation</h2><span class="spacer"></span>
+      <label class="toggle">Agent <select data-change="conv-agent" style="width:auto">${['', ...AGENTS, 'human'].map((a) => `<option value="${a}" ${a === S.convAgent ? 'selected' : ''}>${a ? nm(a) : 'All'}</option>`).join('')}</select></label>
+      <label class="toggle"><input type="checkbox" data-change="show-llm" ${S.showLLM ? 'checked' : ''}> Show raw LLM calls</label></div>
       <ol class="conv">${rows || '<li class="muted">No messages yet.</li>'}</ol></section>`;
 }
 
-function viewSafety() {
-  const sys = S.system || {}, sb = sys.sandbox_host || {}, r = S.run, probe = S.probe;
-  const proof = probe?.proof || r?.proofs?.[0];
-  const ic = (ok) => `<span class="ic ${ok === true ? 'ok' : ok === false ? 'bad' : ''}" aria-label="${ok === true ? 'passed' : ok === false ? 'failed' : 'pending'}">${ok === true ? '✓' : ok === false ? '✗' : '○'}</span>`;
-  const blocked = probe?.checks.filter((c) => c.outcome === 'BLOCKED').length;
-  const item = (ok, title, body) => `<li>${ic(ok)}<div><h4>${title}</h4>${body}</div></li>`;
-  return `<section class="card"><div class="row"><h2>Safety: blast radius zero</h2><span class="spacer"></span>
-      <button class="btn primary" data-act="probe" ${S.probing || MODE === 'snapshot' ? 'disabled' : ''}>${S.probing ? '<span class="spin"></span> Probing…' : 'Run isolation probe'}</button></div>
-    <p class="muted">Agent-written tests never run on the control plane. They run in throwaway gVisor sandboxes on a separate Vultr VM with no network.</p>
-    <ol class="checklist">
-      ${item(sb.error || sb.kvm === false || sb.runsc === false ? false : sb.kvm && sb.runsc ? true : null, '① Host check', sb.error ? `<p class="bad">Sandbox host unreachable: ${esc(sb.error)}</p>` : `<p>Sandbox host <b>${esc(sb.hostname || '—')}</b> · KVM ${yes(sb.kvm)} · gVisor runsc ${yes(sb.runsc)} · mode <b>${esc(sb.mode || '—')}</b></p>`)}
-      ${item(r?.sandboxes_used ? r.proofs.every((p) => p.runtime === 'runsc') : null, '② Agent ran tests in a sandbox', r?.sandboxes_used ? `<p>${num(r.sandboxes_used)} sandboxes · runtime ${esc([...new Set(r.proofs.map((p) => runtimeLabel(p.runtime)))].join(', '))}</p>` : '<p class="muted">No sandbox run yet for this run.</p>')}
-      ${item(proof ? proof.runtime === 'runsc' : null, '③ Proof from inside the sandbox', proof ? `<p>hostname <b class="mono">${esc(proof.hostname)}</b> · network <b>${esc(proof.network)}</b> · read-only root ${yes(proof.readonly_rootfs)}</p><pre>${esc(proof.uname)}</pre>${sb.uname ? `<p class="muted">Host kernel for comparison: <span class="mono">${esc(sb.uname)}</span>. A different kernel inside means gVisor's user-space kernel answered, not the host.</p>` : ''}` : '<p class="muted">Run tests or the probe to capture proof.</p>')}
-      ${item(probe ? blocked === probe.checks.length : null, '④ Isolation probe', probe ? `<p>${blocked} of ${probe.checks.length} attacks blocked.</p><div class="tbl-wrap"><table><thead><tr><th>Attack</th><th>Tried</th><th>Outcome</th><th>Detail</th></tr></thead><tbody>
-        ${probe.checks.map((c) => `<tr><td>${esc(c.name)}</td><td class="mono">${esc(c.attempted)}</td><td><span class="chip ${c.outcome === 'BLOCKED' ? 'blocked' : 'allowed'}">${c.outcome === 'BLOCKED' ? '✓ BLOCKED' : '✗ ALLOWED'}</span></td><td>${esc(c.detail)}</td></tr>`).join('')}</tbody></table></div>`
-        : `<p class="muted">${MODE === 'snapshot' ? 'The probe is not part of the recording.' : 'Click "Run isolation probe" to try rm -rf /, internet egress and more from inside a fresh sandbox.'}</p>`)}
-      ${item(sb.active_sandboxes === 0 && (!probe || probe.destroyed) ? true : null, '⑤ Teardown', `<p>Active sandboxes right now: <b>${sb.active_sandboxes ?? '—'}</b>${probe ? ` · probe sandbox ${probe.destroyed ? '<span class="good">destroyed ✓</span>' : '<span class="bad">still running ✗</span>'}` : ''}</p>`)}
-    </ol></section>`;
+function vmCard(title, host = {}, extra = '') {
+  const v = host.vultr || {}, on = v.available === true;
+  const kv = (k, val) => `<div><dt>${k}</dt><dd>${esc(val ?? '—')}</dd></div>`;
+  return `<section class="panel vm"><header><span class="vm-ic">${SERVER}</span><div style="flex:1"><h3>${title}</h3><div class="muted" style="font-size:.8rem">${on ? 'Vultr instance' : 'Local dev (not on Vultr)'}</div></div><span class="badge ${on ? 'vultr' : ''}">${on ? 'VULTR' : 'LOCAL'}</span></header>
+    <dl class="kv">${kv('Instance id', v.instance_id)}${kv('Region', v.region)}${kv('Plan', v.plan)}${kv('Hostname', v.hostname || host.hostname)}${kv('Public IP', v.public_ip)}${kv('Private IP', v.private_ip)}${extra}</dl></section>`;
 }
 
-function lineChart(curves) {
-  const series = [['learned', 'Learned policy', 'var(--blue)', ''], ['random', 'Random', 'var(--orange)', '6 5']].filter(([k]) => curves[k]?.length);
-  const n = Math.max(...series.map(([k]) => curves[k].length)), max = Math.max(1, ...series.flatMap(([k]) => curves[k]));
-  const W = 660, H = 300, pl = 44, pr = 120, pt = 14, pb = 44;
+function viewInfra() {
+  const sys = S.system || {}, cp = sys.control_plane || {}, sb = sys.sandbox_host || {}, st = cp.storage || {}, os = sys.object_storage || {}, r = S.run, probe = S.probe;
+  const yn = (v) => (v === true ? '✓ yes' : v === false ? '✗ no' : '—');
+  const kv = (k, val, raw = false) => `<div><dt>${k}</dt><dd>${raw ? val : esc(val ?? '—')}</dd></div>`;
+  const used = st.total_gb ? Math.max(0, Math.min(100, (100 * (st.total_gb - (st.free_gb ?? 0))) / st.total_gb)) : 0;
+  const sbExtra = sb.error ? kv('Status', `unreachable: ${sb.error}`) : kv('KVM', yn(sb.kvm)) + kv('gVisor runsc', yn(sb.runsc)) + kv('Mode', sb.mode) + kv('Active sandboxes', sb.active_sandboxes);
+  const storage = `<section class="panel vm"><header><span class="vm-ic">${SERVER}</span><div style="flex:1"><h3>Storage</h3><div class="muted" style="font-size:.8rem">run data and evidence</div></div></header>
+    <dl class="kv">${kv('Block Storage', st.is_block_storage === true ? '✓ Vultr Block Storage' : st.is_block_storage === false ? 'local disk' : '—')}${kv('Device', st.device)}${kv('Mount point', st.mount_point)}
+      ${kv('Free / total', st.total_gb != null ? `${st.free_gb ?? '?'} / ${st.total_gb} GB<div class="usage"><i style="width:${used.toFixed(0)}%"></i></div>` : '—', true)}
+      ${kv('Object Storage', os.configured === true ? '✓ configured' : os.configured === false ? 'not configured' : '—')}${kv('Endpoint', os.endpoint)}${kv('Bucket', os.bucket)}</dl></section>`;
+  const nb = sys.netbird || {}, peers = nb.peers || [], sbPeer = peers.find((p) => /sandbox/i.test(p.fqdn || '')) || peers[0];
+  const path = (t) => (t ? `<span class="chip ${t === 'P2P' ? 'blocked' : 'v-error'}">${esc(t)}</span>` : '—');
+  const netbird = `<section class="panel"><div class="row"><span class="vm-ic">${SHIELD}</span><div style="flex:1"><div class="eyebrow">NetBird · zero-port access</div><h2 style="margin:0">No inbound app ports</h2></div>
+      <span class="badge ${nb.available ? 'vultr' : ''}">${nb.available ? 'NETBIRD CONNECTED' : 'NETBIRD NOT DETECTED'}</span></div>
+    ${nb.available ? `<p class="copyline">Public URL served by the NetBird reverse proxy; no inbound app ports on either Vultr VM.</p>
+      <div class="grid2"><dl class="kv">${kv('Public URL', nb.public_url ? `<a href="${esc(safeUrl(nb.public_url))}" target="_blank" rel="noopener">${esc(nb.public_url)}</a>` : '—', true)}${kv('This peer', `${nb.ip || '—'}${nb.fqdn ? ' · ' + nb.fqdn : ''}`)}
+        ${kv('Control → sandbox', nb.sandbox_via_netbird ? `over NetBird WireGuard${sbPeer?.connection_type ? ` (${sbPeer.connection_type})` : ''}` : 'over Vultr VPC')}</dl>
+      <div class="tbl-wrap"><table><thead><tr><th>Peer</th><th>NetBird IP</th><th>Status</th><th>Path</th><th>Latency</th></tr></thead><tbody>
+        ${peers.map((p) => `<tr><td class="mono">${esc(p.fqdn)}</td><td class="mono">${esc(p.ip)}</td><td>${p.status === 'Connected' ? '<span class="good">● Connected</span>' : esc(p.status)}</td><td>${path(p.connection_type)}</td><td class="mono">${p.latency_ms != null ? `${Number(p.latency_ms).toFixed(1)} ms` : '—'}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">No peers reported.</td></tr>'}</tbody></table></div></div>`
+      : '<p class="muted">NetBird is not running on this host (local dev). On Vultr, both VMs join NetBird and the UI is reached through the NetBird reverse proxy.</p>'}</section>`;
+  const onK8s = sb.mode === 'kubernetes';
+  const host = (() => { try { return new URL(sb.cluster_api).host; } catch { return sb.cluster_api; } })();
+  const pools = sb.pools || {}, nodes = sb.nodes || [];
+  const poolCard = (key, title, sub) => { const pl = pools[key] || {}, ns = nodes.filter((n) => pl.node_pool && n.pool === pl.node_pool);
+    return `<div class="panel2 pool pool-${key}"><div class="eyebrow">${title}</div><div class="muted" style="font-size:.8rem">${sub}</div>
+      <dl class="kv" style="margin-top:.4rem">${kv('Namespace', pl.namespace)}${kv('Node pool', pl.node_pool || 'not set: pods may share nodes')}</dl>
+      <ul class="nodes">${ns.map((n) => `<li><span class="mono">${esc(n.name)}</span>${n.ready ? '<span class="chip blocked">✓ Ready</span>' : '<span class="chip allowed">✗ NotReady</span>'}</li>`).join('') || '<li class="muted">No nodes with this pool label.</li>'}</ul></div>`; };
+  const hasPools = !!(pools.agent || pools.data);
+  const poolsBlock = hasPools ? `<div class="lanes" style="margin-top:.7rem">${poolCard('agent', 'Agent pool', 'agent-written tests, human and triage follow-ups')}<div class="wall slim" role="separator" aria-label="separate namespaces, separate VMs"></div>${poolCard('data', 'Data pool', 'IBM TabFormer replay only · refuses agent code')}</div>
+    <p class="copyline">Agent code and customer-like data never share a sandbox or a machine.</p>` : '';
+  const vke = `<section class="panel vm span2"><header><span class="vm-ic">${K8S}</span><div style="flex:1"><h3>Vultr Kubernetes Engine</h3><div class="muted" style="font-size:.8rem">sandbox cluster · one Job per test batch</div></div><span class="badge vultr">VKE</span></header>
+    ${sb.error ? `<p class="bad">Kubernetes API unreachable: ${esc(sb.error)}</p>` : `<div class="${hasPools ? '' : 'grid2'}"><dl class="kv ${hasPools ? 'kv2' : ''}">${kv('Cluster API', host)}${kv('Namespace', sb.namespace)}
+      ${kv('RuntimeClass', sb.runtime_class ? `${sb.runtime_class} ${sb.runsc ? '✓' : '✗ missing'}` : '—')}${kv('Active sandbox Jobs', sb.active_sandboxes)}${kv('Runner image', sb.image)}${kv('Registry', 'Vultr Container Registry')}</dl>
+      ${hasPools ? '' : `<div class="tbl-wrap"><table><thead><tr><th>Node</th><th>Pool</th><th>Ready</th><th>Kubelet</th></tr></thead><tbody>
+      ${(sb.nodes || []).map((n) => `<tr><td class="mono">${esc(n.name)}</td><td class="mono">${esc(n.pool || '—')}</td><td>${n.ready ? '<span class="good">✓ Ready</span>' : '<span class="bad">✗ NotReady</span>'}</td><td class="mono">${esc(n.kubelet || '—')}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">No nodes reported.</td></tr>'}
+      </tbody></table></div>`}</div>${poolsBlock}`}</section>`;
+  const HARDEN = ['separate agent and data pools', 'restricted Pod Security', 'deny-all NetworkPolicy', 'no ServiceAccount token', 'read-only root', 'drop ALL capabilities', 'ResourceQuota 20 pods', 'Job deleted after each batch'];
+  const hardening = `<section class="panel vm ${onK8s ? 'span2' : 'span3'}"><div class="eyebrow">Sandbox hardening${onK8s ? ' · both pools' : ''}</div><h3>Every sandbox pod gets</h3>
+    <ul class="harden">${HARDEN.map((h) => `<li><span class="${onK8s ? 'good' : 'muted'}" aria-hidden="true">${onK8s ? '✓' : '○'}</span> ${h}</li>`).join('')}</ul>
+    ${onK8s ? '' : '<p class="muted" style="font-size:.82rem">Local dev: tests run as plain processes (local-unsafe). These controls apply on Vultr Kubernetes Engine.</p>'}</section>`;
+  const proof = probe?.proof || r?.proofs?.[0], blocked = probe?.checks.filter((c) => c.outcome === 'BLOCKED').length;
+  return `<div class="eyebrow">Infrastructure · show me the instance</div>
+    <div class="vm-grid">${vmCard('Control plane', cp)}${onK8s ? vke : vmCard('Sandbox host', sb, sbExtra)}${storage}${hardening}</div>${netbird}
+    <section class="panel"><div class="row"><div><div class="eyebrow">Blast radius zero</div><h2 style="margin:0">Isolation probe</h2></div><span class="spacer"></span>
+      <button class="btn primary" data-act="probe" ${dis(S.probing)}>${S.probing ? '<span class="spin"></span> Probing…' : 'Run isolation probe'}</button></div>
+      ${roLine()}<p class="copyline">The VM can read its Vultr metadata; the sandbox cannot.</p>
+      <p class="muted">Agent-written tests never run on the control plane. ${onK8s ? 'Each batch runs as a fresh Kubernetes Job under the gVisor RuntimeClass on Vultr Kubernetes Engine: egress denied by NetworkPolicy, read-only root, no credentials, deleted afterwards.' : 'In local dev they run as plain processes (local-unsafe); on Vultr each batch is a gVisor Job on Kubernetes Engine.'}</p>
+      ${probe ? `<p><b>${blocked} of ${probe.checks.length}</b> attacks blocked.</p><div class="tbl-wrap"><table><thead><tr><th>Attack</th><th>Tried inside the sandbox</th><th>Outcome</th><th>Detail</th></tr></thead><tbody>
+        ${probe.checks.map((c) => `<tr><td>${esc(c.name)}</td><td class="mono">${esc(c.attempted)}</td><td><span class="chip ${c.outcome === 'BLOCKED' ? 'blocked' : 'allowed'}">${c.outcome === 'BLOCKED' ? '✓ BLOCKED' : '✗ ALLOWED'}</span></td><td>${esc(c.detail)}</td></tr>`).join('')}</tbody></table></div>`
+        : `<p class="muted">${MODE === 'snapshot' ? 'The probe is not part of the recording.' : 'Click "Run isolation probe" to try rm -rf /, internet egress, the cloud metadata service and more from inside a fresh sandbox.'}</p>`}
+      ${proof ? `<h3 style="margin-top:.8rem">Proof from inside the sandbox</h3><p>hostname <b class="mono">${esc(proof.hostname)}</b> · runtime <b>${esc(runtimeLabel(proof.runtime))}</b> · network <b>${esc(proof.network)}</b>${onK8s ? ' <span class="chip blocked">egress denied by NetworkPolicy</span>' : ''} · read-only root ${yn(proof.readonly_rootfs)}</p><pre>${esc(proof.uname)}</pre>
+        ${sb.uname ? `<p class="muted" style="font-size:.82rem">Host kernel for comparison: <span class="mono">${esc(sb.uname)}</span>. A different kernel inside means gVisor's user-space kernel answered, not the host.</p>` : ''}` : ''}
+      <p>Teardown: active sandbox ${onK8s ? 'Jobs' : 'processes'} right now <b class="mono">${esc(sb.active_sandboxes ?? '—')}</b>${probe ? ` · probe sandbox ${probe.destroyed ? '<span class="good">✓ destroyed</span>' : '<span class="bad">✗ still running</span>'}` : ''}${r?.sandboxes_used ? ` · this run used ${num(r.sandboxes_used)} sandboxes` : ''}</p></section>`;
+}
+
+function lineChart(series) {
+  series = series.filter((s) => s[0]?.length);
+  if (!series.length) return '';
+  const n = Math.max(...series.map((s) => s[0].length)), maxV = Math.max(0, ...series.flatMap((s) => s[0]));
+  const frac = maxV <= 1, max = frac ? 1 : Math.max(1, maxV);
+  const W = 560, H = 250, pl = 46, pr = 84, pt = 14, pb = 40;
   const X = (i) => pl + (i * (W - pl - pr)) / Math.max(1, n - 1), Y = (v) => pt + (H - pt - pb) * (1 - v / max);
-  const stepY = Math.max(1, Math.ceil(max / 4)), ticks = Array.from({ length: Math.floor(max / stepY) + 1 }, (_, i) => i * stepY);
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Regressions found versus executions: learned policy versus random">
-    ${ticks.map((t) => `<line class="axis" x1="${pl}" x2="${W - pr}" y1="${Y(t)}" y2="${Y(t)}"/><text class="muted-t" x="${pl - 8}" y="${Y(t) + 4}" text-anchor="end" font-size="11">${t}</text>`).join('')}
-    ${[0, Math.floor((n - 1) / 2), n - 1].map((i) => `<text class="muted-t" x="${X(i)}" y="${H - pb + 18}" text-anchor="middle" font-size="11">${i + 1}</text>`).join('')}
-    <text class="muted-t" x="${(pl + W - pr) / 2}" y="${H - 6}" text-anchor="middle" font-size="12">Executions (test transactions sent)</text>
-    <text class="muted-t" x="12" y="${pt + (H - pt - pb) / 2}" font-size="12" transform="rotate(-90 12 ${pt + (H - pt - pb) / 2})" text-anchor="middle">Regressions found (mean)</text>
-    ${series.map(([k, label, c, dash]) => { const a = curves[k]; return `<path d="${a.map((v, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join('')}" fill="none" stroke="${c}" stroke-width="3" stroke-dasharray="${dash}"/>
-      <text x="${X(a.length - 1) + 8}" y="${Y(a.at(-1)) + 4}" font-size="12" font-weight="700" style="fill:${c}">${label}</text>`; }).join('')}</svg>`;
+  const step = Math.max(1, Math.ceil(max / 4)), ticks = frac ? [0, 0.25, 0.5, 0.75, 1] : Array.from({ length: Math.floor(max / step) + 1 }, (_, i) => i * step);
+  const f = (v) => (frac ? `${Math.round(v * 100)}%` : v);
+  const lab = series.map(([a], i) => ({ i, y: Y(a.at(-1)) })).sort((a, b) => a.y - b.y); // keep end labels >= 14px apart
+  for (let k = 1; k < lab.length; k++) if (lab[k].y - lab[k - 1].y < 14) lab[k].y = lab[k - 1].y + 14;
+  const ly = Object.fromEntries(lab.map((l) => [l.i, l.y]));
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="${frac ? 'Share of runs that found the bug' : 'Regressions found'} versus executions: ${esc(series.map((s) => s[1]).join(' versus '))}">
+    ${ticks.map((t) => `<line class="ln" x1="${pl}" x2="${W - pr}" y1="${Y(t)}" y2="${Y(t)}"/><text class="t-muted t-mono" x="${pl - 6}" y="${Y(t) + 4}" text-anchor="end" font-size="10">${f(t)}</text>`).join('')}
+    ${[0, Math.floor((n - 1) / 2), n - 1].map((i) => `<text class="t-muted t-mono" x="${X(i)}" y="${H - pb + 16}" text-anchor="middle" font-size="10">${i + 1}</text>`).join('')}
+    <text class="t-muted" x="${(pl + W - pr) / 2}" y="${H - 6}" text-anchor="middle" font-size="11">Executions (test transactions sent)</text>
+    ${series.map(([a, label, c, dash], i) => { const y = ly[i]; return `<path d="${a.map((v, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join('')}" fill="none" stroke="${c}" stroke-width="3" stroke-dasharray="${dash}"/>
+      <text x="${X(a.length - 1) + 8}" y="${y + 4}" font-size="12" font-weight="700" style="fill:${c}">${label}</text>`; }).join('')}</svg>`;
 }
 
 function viewRL() {
-  const r = S.run, rl = r?.rl || { status: 'idle' }, ff = rl.first_find || {};
-  return `<section class="card"><div class="row"><h2>RL explorer</h2><span class="spacer"></span>
-      <button class="btn primary" data-act="rl" ${!r || rl.status === 'running' || S.busy || MODE === 'snapshot' ? 'disabled' : ''}>${rl.status === 'running' ? '<span class="spin"></span> Training…' : 'Train RL explorer on CPU'}</button></div>
-    <p class="muted">Trained inside a sandbox on 7 mutant switches; evaluated on a held-out bug${rl.holdout_bug ? ` (<code>${esc(rl.holdout_bug)}</code>)` : ''}. No LLM, CPU only.</p>
-    ${!r ? '<p class="muted">Select a run first.</p>' : rl.status === 'error' ? '<p class="bad">Training failed. Check the sandbox host logs.</p>' : ''}
-    ${rl.curves && Object.keys(rl.curves).length ? `<div class="bigstats"><div><small>Learned policy: first find after</small><b>${esc(ff.learned ?? '—')}</b><small>executions</small></div>
-      <div><small>Random: first find after</small><b>${esc(ff.random ?? '—')}</b><small>executions</small></div>
-      <div><small>Training</small><b>${num(rl.episodes)}</b><small>episodes · ${num(rl.seeds)} seeds</small></div></div>
-      ${lineChart(rl.curves)}<p class="muted">Trained on: ${esc((rl.trained_on_bugs || []).join(', '))}</p>` : ''}</section>`;
+  const r = S.run, rl = r?.rl || { status: 'idle' }, ff = rl.first_find || {}, cv = rl.curves || {};
+  const fmt = (v) => (v == null ? '—' : Number(v).toFixed(1));
+  const panel = (title, sub, lk, rk) => {
+    if (ff[lk] == null && !cv[lk]?.length) return '';
+    const L = ff[lk], R = ff[rk], win = L != null && R != null && L !== R ? (L < R ? 'l' : 'r') : '';
+    const box = (who, v, w) => `<div class="${win === w ? 'win' : ''}"><small>${who}</small><b>${fmt(v)}</b><small>executions to first find${win === w ? ' · faster' : ''}</small></div>`;
+    return `<div class="panel2"><h3>${title}</h3><p class="muted" style="font-size:.82rem">${sub}</p><div class="ff">${box('Learned policy', L, 'l')}${box('Random order', R, 'r')}</div>
+      ${lineChart([[cv[lk], 'Learned', 'var(--vultr-ink)', ''], [cv[rk], 'Random', 'var(--warn)', '6 5']])}</div>`;
+  };
+  const panels = panel('Trained bug families', `The ${rl.trained_on_bugs?.length || 7} mutant switches it trained on, evaluated on fresh seeds.`, 'learned_training_mix', 'random_training_mix')
+    + panel(`Held-out bug · <code>${esc(rl.holdout_bug || 'dup_window_units')}</code>`, 'Never seen in training: the duplicate-window bug from the demo.', 'learned', 'random');
+  return `<section class="panel"><div class="row"><div><div class="eyebrow">RL explorer · CPU, no LLM</div><h2 style="margin:0">Can a learned policy find bugs sooner?</h2></div><span class="spacer"></span>
+      <button class="btn primary" data-act="rl" ${dis(!r || rl.status === 'running' || S.busy)}>${rl.status === 'running' ? '<span class="spin"></span> Training…' : 'Train RL explorer on CPU'}</button></div>
+    <p class="muted">Trained inside a sandbox on 7 mutant switches, then evaluated on a held-out bug. Lower is better. ${rl.episodes ? `${num(rl.episodes)} episodes · ${num(rl.seeds)} evaluation seeds.` : ''}</p>
+    ${roLine()}<p class="caption">Learns bug families it has seen; does not generalise to the held-out duplicate bug (reported honestly).</p>
+    ${!r ? '<p class="muted">Select a run first.</p>' : rl.status === 'error' ? '<p class="bad">Training failed. Check the sandbox logs.</p>' : ''}
+    ${panels ? `<div class="rl-grid">${panels}</div>` : ''}${rl.trained_on_bugs?.length ? `<p class="muted" style="font-size:.8rem">Trained on: <span class="mono">${esc(rl.trained_on_bugs.join(', '))}</span></p>` : ''}</section>`;
 }
 
 // ---------- render ----------
-const VIEW_FN = { rules: viewRules, review: viewReview, run: viewRun, evidence: viewEvidence, decision: viewDecision, agents: viewAgents, safety: viewSafety, rl: viewRL };
+const VIEW_FN = { rules: viewRules, review: viewReview, run: viewRun, evidence: viewEvidence, decision: viewDecision, agents: viewAgents, infra: viewInfra, rl: viewRL };
+
+function renderTop() {
+  const r = S.run, sys = S.system;
+  const cp = sys?.control_plane || {}, sb = sys?.sandbox_host || {}, llm = sys?.llm || {}, v = cp.vultr || {};
+  const b = $('#badge');
+  if (MODE === 'snapshot') { b.className = 'badge-live vultr'; b.innerHTML = '<b>RECORDED</b> Vultr deployment'; }
+  else if (!sys) b.innerHTML = '<span class="spin"></span> connecting';
+  else if (sys.error) { b.className = 'badge-live'; b.innerHTML = '<span class="dot bad"></span><b>OFFLINE</b> control plane unreachable'; }
+  else if (v.available) {
+    const vms = 1 + (sb.vultr?.available ? 1 : 0);
+    b.className = 'badge-live vultr';
+    b.innerHTML = `${MODE === 'mock' ? '<b>MOCK</b>' : '<span class="dot ok"></span><b>LIVE</b>'} on Vultr · ${esc(v.region || '?')} · ${vms} VM${vms > 1 ? 's' : ''}${sb.mode === 'kubernetes' ? ' + VKE' : ''}`;
+  } else { b.className = 'badge-live'; b.innerHTML = '<span class="dot"></span><b>LOCAL DEV</b> not on Vultr'; }
+  if (sys?.netbird?.available) b.innerHTML += ` <span class="nb" title="Reached through NetBird">${SHIELD} NetBird</span>`;
+  const me = S.me, short = (u) => (u && u.length > 16 && u.includes('@') ? u.split('@')[0] + '@…' : u || '');
+  $('#me').innerHTML = !me || me.auth === 'none' ? '' : me.can_act
+    ? `<span class="chip-model" title="${esc(me.user || '')}">${SHIELD} ${esc(short(me.user))} · ${esc((me.role || 'tester').replace(/^./, (c) => c.toUpperCase()))} · NetBird SSO</span>`
+    : `<span class="chip-model">${SHIELD} Viewer · read-only (NetBird PIN)</span>`;
+  const lstate = llm.offline ? ['', 'offline'] : llm.reachable === true ? ['ok', 'reachable'] : llm.reachable === false ? ['bad', 'unreachable'] : null;
+  $('#model').innerHTML = sys && !sys.error ? `<span class="chip-model">Vultr · <b>${esc(llm.model || '—')}</b>${lstate ? ` <i class="dot ${lstate[0]}" title="${lstate[1]}"></i><span class="sr">${lstate[1]}</span>` : ''}</span>` : '';
+  const llmEv = S.events.filter((e) => e.kind === 'llm_call');
+  const telemetry = `<div class="telemetry" aria-label="Run telemetry"><div><b>${S.agents.length || AGENTS.length}</b> agents</div><div><b>${num(llmEv.length)}</b> inference calls</div><div><b>${num(llmEv.reduce((s, e) => s + (e.tokens_in || 0) + (e.tokens_out || 0), 0))}</b> tokens</div></div>`;
+  $('#sw-sum').textContent = r ? `${r.title} · ${STATUS_LABEL[r.status] || r.status}` : `Runs (${S.runs.length})`;
+  $('#runs').innerHTML = S.runs.map((x) => `<button class="run-item" data-act="open" data-id="${esc(x.id)}" aria-current="${x.id === r?.id}"><span class="t">${esc(x.title)}</span><small>${esc(STATUS_LABEL[x.id === r?.id ? r.status : x.status] || x.status)} · ${dt(x.created_at)} · ${esc(x.id)}</small></button>`).join('') || '<p class="muted" style="padding:.4rem">No runs yet.</p>';
+  const st = r ? stage(r.status) : -1, open = gateOpen(r);
+  const done = { rules: !!r, review: st > stage('awaiting_approval'), run: st >= stage('awaiting_decision'), evidence: !!r?.decision, decision: !!r?.decision };
+  const btn = ([v, label], i) => `<button data-act="nav" data-v="${v}" class="${done[v] ? 'done' : ''}" ${S.view === v ? 'aria-current="page"' : ''}><span class="n">${done[v] ? '✓' : i + 1}</span>${label}${done[v] ? '<span class="sr"> (done)</span>' : ''}</button>`;
+  $('#rail').innerHTML = STEPS.slice(0, 2).map(btn).join('')
+    + `<div class="lockline ${open ? 'open' : ''}" role="img" aria-label="Human gate ${open ? 'open' : 'locked'}">${LOCK(open)}<span>${open ? 'gate open' : 'gate locked'}</span></div>`
+    + STEPS.slice(2).map((s, i) => btn(s, i + 2)).join('') + '<hr>'
+    + TABS.map(([v, label]) => `<button class="tab" data-act="nav" data-v="${v}" ${S.view === v ? 'aria-current="page"' : ''}><span class="n">${label[0]}</span>${label}</button>`).join('') + telemetry;
+}
 
 function render(force = false) {
-  const r = S.run;
-  const sys = S.system;
-  if (sys) {
-    const cp = sys.control_plane || {}, sb = sys.sandbox_host || {}, llm = sys.llm || {};
-    $('#sys').innerHTML = sys.error ? `<span class="pill bad">Control plane unreachable</span>`
-      : `<span class="pill">Control plane <b>${esc(cp.hostname || '—')}</b></span>
-      <span class="pill">Sandbox host ${sb.error ? '<b class="bad">unreachable</b>' : `<b>${esc(sb.hostname || '—')}</b> KVM ${yes(sb.kvm)} runsc ${yes(sb.runsc)} <b>${esc(sb.mode || '')}</b>`}</span>
-      <span class="pill">Model <b>Vultr · ${esc(llm.model || '—')}</b>${llm.reachable == null ? '' : llm.reachable ? ' <i class="dot ok"></i>reachable' : ' <i class="dot bad"></i>unreachable'}</span>`;
-  }
-  const llmEv = S.events.filter((e) => e.kind === 'llm_call');
-  $('#stats').innerHTML = `<b>${S.agents.length || AGENTS.length}</b> agents · <b>${num(llmEv.length)}</b> Vultr inference calls · <b>${num(llmEv.reduce((s, e) => s + (e.tokens_in || 0) + (e.tokens_out || 0), 0))}</b> tokens`;
-  $('#runs').innerHTML = S.runs.map((x) => `<button class="run-item" data-act="open" data-id="${esc(x.id)}" aria-current="${x.id === r?.id}"><span class="t">${esc(x.title)}</span><small>${esc(STATUS_LABEL[x.id === r?.id ? r.status : x.status] || x.status)} · ${dt(x.created_at)}</small></button>`).join('') || '<p class="muted" style="padding:0 .3rem">No runs yet.</p>';
-  const st = r ? stage(r.status) : -1;
-  const done = { rules: !!r, review: st > stage('awaiting_approval'), run: st >= stage('awaiting_decision'), evidence: !!r?.decision, decision: !!r?.decision };
-  $('#rail').innerHTML = STEPS.map(([v, label], i) => `<button data-act="nav" data-v="${v}" class="${done[v] ? 'done' : ''}" ${S.view === v ? 'aria-current="page"' : ''}><span class="n">${done[v] ? '✓' : i + 1}</span>${label}${done[v] ? '<span class="sr"> (done)</span>' : ''}</button>`).join('')
-    + '<span class="sep"></span>' + TABS.map(([v, label]) => `<button class="tab" data-act="nav" data-v="${v}" ${S.view === v ? 'aria-current="page"' : ''}>${label}</button>`).join('');
-  const main = $('#main');
-  const key = JSON.stringify([S.view, r, S.events.length, S.agents, S.system, S.probe, S.probing, S.results?.length, S.triageResults?.length, S.verdict, S.sel, S.editing, S.convAgent, S.showLLM, S.busy, S.flashUntil > Date.now()]);
+  renderTop();
+  const r = S.run, main = $('#main');
+  const key = JSON.stringify([S.view, r, S.events.length, S.agents, S.view === 'infra' ? S.system : 0, S.probe, S.probing, S.results?.length, S.triageResults?.length, S.verdict, S.sel, S.editing, S.convAgent, S.showLLM, S.busy, S.flashUntil > Date.now(), S.me, S.share]);
   // Polling never clobbers a form the user is editing; explicit actions (force) do.
   if (!force && (key === S.lastKey || S.dirty || (main.contains(document.activeElement) && document.activeElement.matches('input,textarea,select')))) return;
   S.lastKey = key; S.dirty = false;
   const open = [...main.querySelectorAll('details[open][data-k]')].map((d) => d.dataset.k);
+  const keep = Object.fromEntries([...main.querySelectorAll('[data-keep]')].map((el) => [el.dataset.keep, el.scrollTop]));
   main.innerHTML = VIEW_FN[S.view]();
   open.forEach((k) => main.querySelector(`details[data-k="${CSS.escape(k)}"]`)?.setAttribute('open', ''));
+  main.querySelectorAll('[data-keep]').forEach((el) => { if (keep[el.dataset.keep] != null) el.scrollTop = keep[el.dataset.keep]; });
+  main.querySelectorAll('[data-bottom]').forEach((el) => { el.scrollTop = el.scrollHeight; });
+  r?.proofs?.forEach((p) => S.seen.add(p.sandbox_id));
   history.replaceState(null, '', `${location.search}#${r ? encodeURIComponent(r.id) + '/' : ''}${S.view}`);
 }
 
 // ---------- events ----------
 const ACTIONS = {
-  nav: (b) => { S.view = b.dataset.v; S.editing = null; render(true); $('#main').focus(); },
-  new: () => { Object.assign(S, { run: null, events: [], agents: [], view: 'rules', results: null, triageResults: null }); render(true); },
-  open: (b) => selectRun(b.dataset.id),
-  sel: (b) => { S.sel = b.dataset.id; render(true); },
+  nav: (b) => { clearInterval(replayTimer); S.view = b.dataset.v; S.editing = null; render(true); if (S.view === 'evidence' && S.results) startReplay(); $('#main').focus(); },
+  new: () => { clearInterval(replayTimer); Object.assign(S, { run: null, events: [], agents: [], view: 'rules', results: null, triageResults: null }); render(true); },
+  open: (b) => { $('#switcher').open = false; selectRun(b.dataset.id); },
+  sel: (b) => { S.sel = b.dataset.id; render(true); startReplay(); },
+  replay: () => startReplay(),
+  'replay-step': (b) => { clearInterval(replayTimer); S.replayStep = +b.dataset.i; drawHero(); },
   'case-edit': (b) => { S.editing = b.dataset.id; render(true); },
   'case-cancel': () => { S.editing = null; render(true); },
   'case-status': (b) => act(() => api('PATCH', `/api/runs/${S.run.id}/cases/${b.dataset.id}`, { status: b.dataset.v })),
   'approve-all': () => act(async () => { const j = await api('POST', `/api/runs/${S.run.id}/approve_all`); toast(`Approved ${j.approved} tests`); }),
   execute: () => act(() => api('POST', `/api/runs/${S.run.id}/execute`)),
   rl: () => act(async () => { await api('POST', `/api/runs/${S.run.id}/rl`); S.run.rl = { status: 'running' }; }),
+  'share-create': () => act(async () => { S.share = await api('POST', `/api/runs/${S.run.id}/share`); S.shareWas = true; }),
+  'share-close': () => act(async () => { S.share = await api('DELETE', `/api/runs/${S.run.id}/share`); }),
   probe: async () => {
     S.probing = true; render(true);
     try { S.probe = await api('POST', '/api/system/probe'); S.system = await api('GET', '/api/system'); } catch (e) { toast(`Probe failed: ${e.message}`, 'err'); }
@@ -632,7 +852,7 @@ const ACTIONS = {
 const FORMS = {
   'new-run': (f, fd) => act(async () => {
     const run = await api('POST', '/api/runs', {
-      title: fd.get('title'), requirements: fd.get('requirements').split('\n').map((s) => s.trim()).filter(Boolean),
+      title: fd.get('title'), requirements: fd.getAll('req').map((s) => s.replace(/\s+/g, ' ').trim()).filter(Boolean),
       rules_text: fd.get('rules_text'), spec_text: fd.get('spec_text'),
       bounds: { max_amount_cents: Math.round(parseFloat(fd.get('max_amount')) * 100), allowed_mti: fd.getAll('mti'), auto_followups: fd.has('auto') } });
     if (fd.has('replay')) await api('PATCH', `/api/runs/${run.id}/replay`, { enabled: true, sample_size: +fd.get('sample'), dataset: 'tabformer' });
@@ -651,7 +871,10 @@ const FORMS = {
     S.runs = await api('GET', '/api/runs');
   }),
 };
-document.addEventListener('click', (e) => { const b = e.target.closest('[data-act]'); if (b && !b.disabled) ACTIONS[b.dataset.act]?.(b); });
+document.addEventListener('click', (e) => {
+  const sw = $('#switcher'); if (sw.open && !sw.contains(e.target)) sw.open = false;
+  const b = e.target.closest('[data-act]'); if (b && !b.disabled) ACTIONS[b.dataset.act]?.(b);
+});
 document.addEventListener('submit', (e) => { const f = e.target; if (FORMS[f.dataset.form]) { e.preventDefault(); if (!S.busy) FORMS[f.dataset.form](f, new FormData(f), e.submitter); } });
 document.addEventListener('input', (e) => { if (e.target.closest('#main form')) S.dirty = true; });
 document.addEventListener('change', (e) => {
@@ -661,14 +884,17 @@ document.addEventListener('change', (e) => {
   if (k === 'show-llm') S.showLLM = e.target.checked;
   e.target.blur(); render(true);
 });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('#switcher').open = false; });
 
 // ---------- boot ----------
 (async function boot() {
-  const banner = { mock: 'Mock mode: fixture data, no backend. Numbers are placeholders; the data set is IBM TabFormer (public synthetic) and the defect is seeded.',
+  if (['dark', 'light'].includes(qs.get('theme'))) document.documentElement.dataset.theme = qs.get('theme');
+  const banner = { mock: 'Mock mode: fixture data, no backend. Numbers and ids are placeholders; the data set is IBM TabFormer (public synthetic) and the defect is seeded.',
     snapshot: 'Recorded run from our Vultr deployment — live app is behind NetBird. Read-only replay; synthetic data, seeded defect.' }[MODE];
   if (banner) { $('#mode').textContent = banner; $('#mode').hidden = false; }
-  try { if (MODE === 'mock') await loadMock(); } catch (e) { toast(`Could not load mock fixtures: ${e.message}`, 'err'); }
-  const [id, view] = decodeURIComponent(location.hash.slice(1)).split('/'); // read before the first render rewrites the hash
+  try { if (MODE === 'mock') { await loadMock(); if (qs.get('viewer') === '1') FX.me = { auth: 'netbird', user: null, groups: [], role: 'viewer', can_act: false }; } } catch (e) { toast(`Could not load mock fixtures: ${e.message}`, 'err'); }
+  const [id, view0] = decodeURIComponent(location.hash.slice(1)).split('/'); // read before the first render rewrites the hash
+  const view = view0 === 'safety' ? 'infra' : view0;
   await tick();
   const want = S.runs.find((x) => x.id === id) || (MODE === 'snapshot' && S.runs[0]);
   if (want) await selectRun(want.id, VIEW_FN[view] ? view : undefined);

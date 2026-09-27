@@ -1,48 +1,54 @@
 {
  "proof": {
-  "sandbox_id": "sbx-probe01",
+  "sandbox_id": "sp-agent-7e19d04b2c",
   "runtime": "runsc",
-  "hostname": "sp-7e19",
-  "uname": "Linux sp-7e19 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
-  "network": "none",
+  "hostname": "sp-agent-7e19d04b2c-p5x2n",
+  "uname": "Linux sp-agent-7e19d04b2c-p5x2n 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+  "network": "eth0",
   "readonly_rootfs": true
  },
  "checks": [
   {
    "name": "Delete everything",
-   "attempted": "rm -rf / --no-preserve-root",
+   "attempted": "rm -rf --no-preserve-root /",
    "outcome": "BLOCKED",
-   "detail": "Read-only file system; sandbox destroyed afterwards, host untouched"
+   "detail": "read-only root fs, files still present; rm said: Read-only file system"
   },
   {
    "name": "Internet egress",
-   "attempted": "curl -m 3 https://example.com",
+   "attempted": "TCP connect 1.1.1.1:443",
    "outcome": "BLOCKED",
-   "detail": "Network is unreachable (network=none)"
+   "detail": "TimeoutError: timed out (egress denied by NetworkPolicy)"
+  },
+  {
+   "name": "DNS lookup",
+   "attempted": "resolve example.com",
+   "outcome": "BLOCKED",
+   "detail": "gaierror: Temporary failure in name resolution"
   },
   {
    "name": "Reach control plane",
-   "attempted": "nc -zw2 10.1.96.3 8000",
+   "attempted": "TCP connect 10.10.0.3:8000",
    "outcome": "BLOCKED",
-   "detail": "Network is unreachable (network=none)"
+   "detail": "TimeoutError: timed out (egress denied by NetworkPolicy)"
   },
   {
-   "name": "Write root filesystem",
-   "attempted": "touch /usr/bin/pwned",
+   "name": "Cloud metadata service",
+   "attempted": "TCP connect 169.254.169.254:80",
    "outcome": "BLOCKED",
-   "detail": "Read-only file system"
+   "detail": "TimeoutError: timed out; the VM can read it, the sandbox cannot"
   },
   {
-   "name": "Read host /etc",
-   "attempted": "cat /host/etc/shadow",
+   "name": "Write system files",
+   "attempted": "echo x > /etc/switchproof-pwned",
    "outcome": "BLOCKED",
-   "detail": "No such file or directory; host paths not mounted"
+   "detail": "OSError: [Errno 30] Read-only file system"
   },
   {
-   "name": "Docker socket",
-   "attempted": "ls -l /var/run/docker.sock",
+   "name": "Escape via Docker socket",
+   "attempted": "open /var/run/docker.sock",
    "outcome": "BLOCKED",
-   "detail": "No such file or directory"
+   "detail": "socket not mounted"
   }
  ],
  "destroyed": true

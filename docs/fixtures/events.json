@@ -43,22 +43,34 @@
   "ts": "2026-09-27T16:03:23Z",
   "agent": "executor",
   "kind": "info",
-  "message": "Split 2,012 cases into 8 batches of up to 256",
+  "message": "AGENT sandbox pool (agent-written tests): dispatching 10 cases in 1 Job to switchproof-agent",
   "data": {
+   "pool": "agent",
    "phase": "run"
   },
   "seq": 21
  },
  {
-  "ts": "2026-09-27T16:03:25Z",
+  "ts": "2026-09-27T16:03:24Z",
   "agent": "executor",
-  "kind": "progress",
-  "message": "Sandbox sbx-3f2a00 started (gVisor runsc, network none)",
+  "kind": "info",
+  "message": "DATA sandbox pool (replay data, no agent code): dispatching 2,000 transactions in 8 Jobs to switchproof-data",
   "data": {
-   "sandbox_id": "sbx-3f2a00",
+   "pool": "data",
    "phase": "run"
   },
   "seq": 23
+ },
+ {
+  "ts": "2026-09-27T16:03:25Z",
+  "agent": "executor",
+  "kind": "progress",
+  "message": "gVisor pod sp-agent-3f2a9c01de started on VKE (egress denied by NetworkPolicy)",
+  "data": {
+   "sandbox_id": "sp-agent-3f2a9c01de",
+   "phase": "run"
+  },
+  "seq": 24
  },
  {
   "ts": "2026-09-27T16:03:31Z",
@@ -82,19 +94,19 @@
    },
    "phase": "run"
   },
-  "seq": 25
+  "seq": 26
  },
  {
   "ts": "2026-09-27T16:03:35Z",
   "agent": "executor",
   "kind": "progress",
-  "message": "Batch 1/8 done; sandbox sbx-3f2a00 destroyed",
+  "message": "Batch 1/8 done; Job sp-agent-3f2a9c01de deleted",
   "data": {
    "batch": 1,
    "done": 256,
    "phase": "run"
   },
-  "seq": 28
+  "seq": 29
  },
  {
   "ts": "2026-09-27T16:03:29Z",
@@ -106,30 +118,30 @@
    "regression": 1,
    "phase": "run"
   },
-  "seq": 24
+  "seq": 25
  },
  {
   "ts": "2026-09-27T16:03:39Z",
   "agent": "executor",
   "kind": "progress",
-  "message": "Sandbox sbx-81c001 started (gVisor runsc, network none)",
+  "message": "gVisor pod sp-data-81c0b7e2a4 started on VKE (egress denied by NetworkPolicy)",
   "data": {
-   "sandbox_id": "sbx-81c001",
+   "sandbox_id": "sp-data-81c0b7e2a4",
    "phase": "run"
   },
-  "seq": 29
+  "seq": 30
  },
  {
   "ts": "2026-09-27T16:03:49Z",
   "agent": "executor",
   "kind": "progress",
-  "message": "Batch 2/8 done; sandbox sbx-81c001 destroyed",
+  "message": "Batch 2/8 done; Job sp-data-81c0b7e2a4 deleted",
   "data": {
    "batch": 2,
    "done": 512,
    "phase": "run"
   },
-  "seq": 31
+  "seq": 32
  },
  {
   "ts": "2026-09-27T16:03:43Z",
@@ -141,30 +153,30 @@
    "regression": 6,
    "phase": "run"
   },
-  "seq": 30
+  "seq": 31
  },
  {
   "ts": "2026-09-27T16:03:53Z",
   "agent": "executor",
   "kind": "progress",
-  "message": "Sandbox sbx-5d1702 started (gVisor runsc, network none)",
+  "message": "gVisor pod sp-data-5d17f09c3b started on VKE (egress denied by NetworkPolicy)",
   "data": {
-   "sandbox_id": "sbx-5d1702",
+   "sandbox_id": "sp-data-5d17f09c3b",
    "phase": "run"
   },
-  "seq": 32
+  "seq": 33
  },
  {
   "ts": "2026-09-27T16:04:03Z",
   "agent": "executor",
   "kind": "progress",
-  "message": "Batch 3/8 done; sandbox sbx-5d1702 destroyed",
+  "message": "Batch 3/8 done; Job sp-data-5d17f09c3b deleted",
   "data": {
    "batch": 3,
    "done": 768,
    "phase": "run"
   },
-  "seq": 34
+  "seq": 35
  },
  {
   "ts": "2026-09-27T16:03:57Z",
@@ -176,30 +188,30 @@
    "regression": 11,
    "phase": "run"
   },
-  "seq": 33
+  "seq": 34
  },
  {
   "ts": "2026-09-27T16:04:07Z",
   "agent": "executor",
   "kind": "progress",
-  "message": "Sandbox sbx-c94e03 started (gVisor runsc, network none)",
+  "message": "gVisor pod sp-data-c94e62d815 started on VKE (egress denied by NetworkPolicy)",
   "data": {
-   "sandbox_id": "sbx-c94e03",
+   "sandbox_id": "sp-data-c94e62d815",
    "phase": "run"
   },
-  "seq": 35
+  "seq": 36
  },
  {
   "ts": "2026-09-27T16:04:17Z",
   "agent": "executor",
   "kind": "progress",
-  "message": "Batch 4/8 done; sandbox sbx-c94e03 destroyed",
+  "message": "Batch 4/8 done; Job sp-data-c94e62d815 deleted",
   "data": {
    "batch": 4,
    "done": 1024,
    "phase": "run"
   },
-  "seq": 37
+  "seq": 38
  },
  {
   "ts": "2026-09-27T16:04:11Z",
@@ -211,30 +223,30 @@
    "regression": 16,
    "phase": "run"
   },
-  "seq": 36
+  "seq": 37
  },
  {
   "ts": "2026-09-27T16:04:21Z",
   "agent": "executor",
   "kind": "progress",
-  "message": "Sandbox sbx-0b6a04 started (gVisor runsc, network none)",
+  "message": "gVisor pod sp-data-0b6a4e7f90 started on VKE (egress denied by NetworkPolicy)",
   "data": {
-   "sandbox_id": "sbx-0b6a04",
+   "sandbox_id": "sp-data-0b6a4e7f90",
    "phase": "run"
   },
-  "seq": 38
+  "seq": 39
  },
  {
   "ts": "2026-09-27T16:04:31Z",
   "agent": "executor",
   "kind": "progress",
-  "message": "Batch 5/8 done; sandbox sbx-0b6a04 destroyed",
+  "message": "Batch 5/8 done; Job sp-data-0b6a4e7f90 deleted",
   "data": {
    "batch": 5,
    "done": 1280,
    "phase": "run"
   },
-  "seq": 40
+  "seq": 41
  },
  {
   "ts": "2026-09-27T16:04:25Z",
@@ -246,30 +258,30 @@
    "regression": 22,
    "phase": "run"
   },
-  "seq": 39
+  "seq": 40
  },
  {
   "ts": "2026-09-27T16:04:35Z",
   "agent": "executor",
   "kind": "progress",
-  "message": "Sandbox sbx-e27305 started (gVisor runsc, network none)",
+  "message": "gVisor pod sp-data-e273c5a1d8 started on VKE (egress denied by NetworkPolicy)",
   "data": {
-   "sandbox_id": "sbx-e27305",
+   "sandbox_id": "sp-data-e273c5a1d8",
    "phase": "run"
   },
-  "seq": 41
+  "seq": 42
  },
  {
   "ts": "2026-09-27T16:04:45Z",
   "agent": "executor",
   "kind": "progress",
-  "message": "Batch 6/8 done; sandbox sbx-e27305 destroyed",
+  "message": "Batch 6/8 done; Job sp-data-e273c5a1d8 deleted",
   "data": {
    "batch": 6,
    "done": 1536,
    "phase": "run"
   },
-  "seq": 43
+  "seq": 44
  },
  {
   "ts": "2026-09-27T16:04:39Z",
@@ -281,30 +293,30 @@
    "regression": 28,
    "phase": "run"
   },
-  "seq": 42
+  "seq": 43
  },
  {
   "ts": "2026-09-27T16:04:49Z",
   "agent": "executor",
   "kind": "progress",
-  "message": "Sandbox sbx-49fd06 started (gVisor runsc, network none)",
+  "message": "gVisor pod sp-data-49fd8b20c6 started on VKE (egress denied by NetworkPolicy)",
   "data": {
-   "sandbox_id": "sbx-49fd06",
+   "sandbox_id": "sp-data-49fd8b20c6",
    "phase": "run"
   },
-  "seq": 44
+  "seq": 45
  },
  {
   "ts": "2026-09-27T16:04:59Z",
   "agent": "executor",
   "kind": "progress",
-  "message": "Batch 7/8 done; sandbox sbx-49fd06 destroyed",
+  "message": "Batch 7/8 done; Job sp-data-49fd8b20c6 deleted",
   "data": {
    "batch": 7,
    "done": 1792,
    "phase": "run"
   },
-  "seq": 46
+  "seq": 47
  },
  {
   "ts": "2026-09-27T16:04:53Z",
@@ -316,30 +328,30 @@
    "regression": 35,
    "phase": "run"
   },
-  "seq": 45
+  "seq": 46
  },
  {
   "ts": "2026-09-27T16:05:03Z",
   "agent": "executor",
   "kind": "progress",
-  "message": "Sandbox sbx-a1c807 started (gVisor runsc, network none)",
+  "message": "gVisor pod sp-data-7a2e91c4d0 started on VKE (egress denied by NetworkPolicy)",
   "data": {
-   "sandbox_id": "sbx-a1c807",
+   "sandbox_id": "sp-data-7a2e91c4d0",
    "phase": "run"
   },
-  "seq": 47
+  "seq": 48
  },
  {
   "ts": "2026-09-27T16:05:13Z",
   "agent": "executor",
   "kind": "progress",
-  "message": "Batch 8/8 done; sandbox sbx-a1c807 destroyed",
+  "message": "Batch 8/8 done; Job sp-data-7a2e91c4d0 deleted",
   "data": {
    "batch": 8,
    "done": 2012,
    "phase": "run"
   },
-  "seq": 49
+  "seq": 50
  },
  {
   "ts": "2026-09-27T16:05:07Z",
@@ -351,7 +363,7 @@
    "regression": 41,
    "phase": "run"
   },
-  "seq": 48
+  "seq": 49
  },
  {
   "ts": "2026-09-27T16:05:21Z",
@@ -361,7 +373,7 @@
   "data": {
    "phase": "run"
   },
-  "seq": 50
+  "seq": 51
  },
  {
   "ts": "2026-09-27T16:05:31Z",
@@ -371,7 +383,7 @@
   "data": {
    "phase": "triage"
   },
-  "seq": 56
+  "seq": 57
  },
  {
   "ts": "2026-09-27T16:05:32Z",
@@ -384,7 +396,7 @@
    "new": "94",
    "phase": "triage"
   },
-  "seq": 57
+  "seq": 58
  },
  {
   "ts": "2026-09-27T16:05:33Z",
@@ -397,7 +409,7 @@
    "new": "94",
    "phase": "triage"
   },
-  "seq": 58
+  "seq": 59
  },
  {
   "ts": "2026-09-27T16:05:34Z",
@@ -410,7 +422,7 @@
    "new": "00",
    "phase": "triage"
   },
-  "seq": 59
+  "seq": 60
  },
  {
   "ts": "2026-09-27T16:05:35Z",
@@ -423,7 +435,7 @@
    "new": "00",
    "phase": "triage"
   },
-  "seq": 60
+  "seq": 61
  },
  {
   "ts": "2026-09-27T16:05:36Z",
@@ -436,7 +448,7 @@
    "new": "00",
    "phase": "triage"
   },
-  "seq": 61
+  "seq": 62
  },
  {
   "ts": "2026-09-27T16:05:37Z",
@@ -449,7 +461,7 @@
    "new": "00",
    "phase": "triage"
   },
-  "seq": 62
+  "seq": 63
  },
  {
   "ts": "2026-09-27T16:05:38Z",
@@ -462,7 +474,7 @@
    "new": "00",
    "phase": "triage"
   },
-  "seq": 63
+  "seq": 64
  },
  {
   "ts": "2026-09-27T16:05:39Z",
@@ -475,7 +487,7 @@
    "new": "00",
    "phase": "triage"
   },
-  "seq": 64
+  "seq": 65
  },
  {
   "ts": "2026-09-27T16:05:45Z",
@@ -486,7 +498,7 @@
    "boundary_s": 1,
    "phase": "triage"
   },
-  "seq": 66
+  "seq": 67
  },
  {
   "ts": "2026-09-27T16:05:55Z",
@@ -497,7 +509,7 @@
    "issue_url": "https://github.com/switchproof-demo/switchproof/issues/12",
    "phase": "triage"
   },
-  "seq": 70
+  "seq": 71
  },
  {
   "ts": "2026-09-27T16:05:57Z",
@@ -507,7 +519,7 @@
   "data": {
    "phase": "triage"
   },
-  "seq": 72
+  "seq": 73
  },
  {
   "ts": "2026-09-27T16:09:04Z",
@@ -518,6 +530,6 @@
    "status_state": "failure",
    "phase": "decision"
   },
-  "seq": 75
+  "seq": 76
  }
 ]
