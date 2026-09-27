@@ -1009,7 +1009,8 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('#switch
   // no run asked for: open the most recent one so visitors never land on an empty page
   const want = S.runs.find((x) => x.id === id) || ((MODE === 'snapshot' || !hashId) && S.runs[0]);
   const target = VIEW_FN[view] || view === 'hero' ? view : VIEW_FN[id] ? id : undefined;
-  if (want) await selectRun(want.id, target); else { render(true); scrollToSec(target); }
+  // first load lands on the 3D hero (the whole story at a glance) unless the link names a section
+  if (want) await selectRun(want.id, target || 'hero'); else { render(true); scrollToSec(target); }
   setInterval(tick, 1000);
 })();
 
