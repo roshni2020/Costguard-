@@ -21,13 +21,13 @@ const RULES = { approve_purchase: 'Approve a purchase when funds are available',
 const FIELD = { t: 'Message type', 2: 'Card number', 3: 'Processing code', 4: 'Amount', 7: 'Transmission time (MMDDhhmmss)', 11: 'STAN',
   14: 'Expiry (YYMM)', 18: 'Merchant category', 22: 'Entry mode', 37: 'Retrieval reference', 39: 'Response code', 41: 'Terminal ID', 48: 'Private data', 49: 'Currency' };
 const STEPS = [['rules', 'Rules'], ['review', 'Approve'], ['run', 'Run'], ['evidence', 'Evidence'], ['decision', 'Decision']];
-const TABS = [['agents', 'Agents'], ['infra', 'Infrastructure'], ['rl', 'RL explorer']];
+const TABS = [['metrics', 'Metrics'], ['agents', 'Agents'], ['infra', 'Infrastructure'], ['rl', 'RL explorer']];
 const STATUS_VIEW = { draft: 'review', planning: 'review', awaiting_approval: 'review', running: 'run', triaging: 'run',
   awaiting_decision: 'evidence', blocked: 'decision', approved_for_release: 'decision' };
 const STATUS_LABEL = { draft: 'Draft', planning: 'Agents planning', awaiting_approval: 'Awaiting your approval', running: 'Running in sandboxes',
   triaging: 'Triage investigating', awaiting_decision: 'Awaiting decision', blocked: 'Migration blocked', approved_for_release: 'Release approved' };
 const ORDER = Object.keys(STATUS_VIEW);
-const PAGES = ['overview', 'rules', 'review', 'run', 'evidence', 'decision', 'agents', 'infra', 'rl'];
+const PAGES = ['overview', 'rules', 'review', 'run', 'evidence', 'decision', 'metrics', 'agents', 'infra', 'rl'];
 // Page to open when a run reaches a status (null: stay put).
 const STATUS_PAGE = { draft: null, planning: null, awaiting_approval: 'review', running: 'run', triaging: null, awaiting_decision: 'evidence', blocked: 'decision', approved_for_release: 'decision' };
 // URL names: the Approve page is #…/approve (internally 'review'); old links (#…/hero, /safety) still work.
@@ -39,7 +39,7 @@ const CONV_KINDS = ['message', 'tool_call', 'tool_result', 'llm_call', 'decision
 
 const S = { runs: [], run: null, events: [], agents: [], system: null, probe: null, results: null, triageResults: null,
   view: 'rules', verdict: 'regression', sel: null, editing: null, convAgent: '', showLLM: true, findingSeen: false, flashUntil: 0,
-  busy: false, probing: false, loadingResults: false, dirty: false, lastKey: '', replayStep: 0, seen: new Set(), me: null, share: undefined, shareWas: false, page: 'overview', keys: {}, dirtySec: new Set(), replayOn: false };
+  busy: false, probing: false, loadingResults: false, dirty: false, lastKey: '', replayStep: 0, seen: new Set(), me: null, share: undefined, shareWas: false, page: 'overview', keys: {}, dirtySec: new Set(), replayOn: false, metrics: undefined, metricsAll: undefined, metricsFor: null };
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 // ---------- helpers ----------
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -144,7 +144,7 @@ const FX = {};
 const M = { run: null, t0: 0, rlT0: 0, decisionEvents: [], share: null };
 const DUR = { planning: 5000, running: 10000, triaging: 4000 };
 async function loadMock() {
-  const names = ['run_awaiting_approval', 'run_awaiting_decision', 'results_regression', 'events', 'events_conversation', 'agents', 'system', 'probe', 'rl_report', 'me'];
+  const names = ['run_awaiting_approval', 'run_awaiting_decision', 'results_regression', 'events', 'events_conversation', 'agents', 'system', 'probe', 'rl_report', 'me', 'metrics', 'metrics_all'];
   await Promise.all(names.map(async (n) => { FX[n] = await (await fetch(`mock/${n}.json`)).json(); }));
 }
 function mockAdvance() {
@@ -179,6 +179,8 @@ async function mockApi(method, path, body = {}) {
   mockAdvance();
   const [p, q] = path.split('?'), params = new URLSearchParams(q), r = M.run;
   if (p === '/api/me') return clone(FX.me);
+  if (p === '/api/metrics') return clone(FX.metrics_all);                        // recorded example from the Vultr deployment
+  if (method === 'GET' && /^\/api\/runs\/[^/]+\/metrics$/.test(p)) return clone(FX.metrics);
   if (method !== 'GET' && FX.me.can_act === false) throw httpErr(403, "Read-only: approvals need the 'testers' group via NetBird SSO");
   if (p === '/api/system') return clone(FX.system);
   if (p === '/api/system/probe') { await sleep(1500); return clone(FX.probe); }
@@ -236,6 +238,8 @@ async function snapApi(method, path) {
   if (!SNAP) { const r = await fetch(qs.get('snapshot')); if (!r.ok) throw httpErr(r.status, 'Could not load the recorded run'); SNAP = await r.json(); }
   const { run, results, events } = SNAP, [p, q] = path.split('?'), params = new URLSearchParams(q);
   if (p === '/api/me') return { auth: 'none', user: null, groups: [], role: 'viewer', can_act: false };
+  if (p === '/api/metrics') { if (SNAP.metrics_all) return SNAP.metrics_all; throw httpErr(404, 'Not recorded'); }
+  if (/\/metrics$/.test(p)) { if (SNAP.metrics) return SNAP.metrics; throw httpErr(404, 'Not recorded'); }
   if (p === '/api/system' && SNAP.system) return SNAP.system;
   if (p === '/api/system') {
     const runsc = run.proofs.some((x) => x.runtime === 'runsc');
@@ -265,7 +269,7 @@ async function selectRun(id, view) {
   try {
     const [run, evs] = await Promise.all([api('GET', `/api/runs/${id}`), api('GET', `/api/runs/${id}/events?after=0`)]);
     clearInterval(replayTimer);
-    Object.assign(S, { run, events: [], results: null, triageResults: null, sel: null, editing: null, probe: null, replayStep: 0, seen: new Set(), share: undefined, replayOn: false });
+    Object.assign(S, { run, events: [], results: null, triageResults: null, sel: null, editing: null, probe: null, replayStep: 0, seen: new Set(), share: undefined, replayOn: false, metrics: undefined, metricsFor: null });
     addEvents(evs);
     S.findingSeen = S.events.some((e) => e.kind === 'finding'); S.flashUntil = 0;
     S.agents = await api('GET', `/api/runs/${id}/agents`).catch(() => deriveAgents(S.events, run.status));
@@ -282,7 +286,7 @@ async function refreshRun() {
   if (S.run?.id !== id) return;
   S.run = run; addEvents(evs);
   S.agents = await api('GET', `/api/runs/${id}/agents`).catch(() => deriveAgents(S.events, run.status));
-  if (run.status !== prev) { S.results = S.triageResults = null; if (STATUS_PAGE[run.status]) setTimeout(() => go(STATUS_PAGE[run.status]), 120); }
+  if (run.status !== prev) { S.results = S.triageResults = null; S.metrics = undefined; if (STATUS_PAGE[run.status]) setTimeout(() => go(STATUS_PAGE[run.status]), 120); }
 }
 
 async function loadResults() {
@@ -806,8 +810,100 @@ function viewOverview() {
     <p class="tri"><span class="eyebrow" style="display:inline">Triage</span> ${tri}</p></section>`;
 }
 
+// ---------- metrics (evaluation) ----------
+async function loadMetrics() {
+  if (S.metricsLoading) return;
+  S.metricsLoading = true;
+  const id = S.metricsFor || S.run?.id, fail = (e) => ({ error: e.message, status: e.status });
+  const [m, all] = await Promise.all([id ? api('GET', `/api/runs/${id}/metrics`).catch(fail) : null, S.metricsAll ? S.metricsAll : api('GET', '/api/metrics').catch(fail)]);
+  S.metrics = m; S.metricsAll = all; S.metricsLoading = false;
+  render(true);
+}
+const pct = (v) => (v == null ? '—' : `${Number(v).toFixed(v >= 99.95 || v === 0 ? 0 : 1)}%`);
+const dur = (sec) => { if (sec == null) return '—'; const s = Math.round(sec); return s < 60 ? `${sec < 10 ? Number(sec).toFixed(1) : s} s` : `${Math.floor(s / 60)} m ${s % 60} s`; };
+const secs1 = (ms) => (ms == null ? '—' : `${(ms / 1000).toFixed(1)} s`);
+const cost = (v) => (v == null ? '—' : `$${Number(v) < 1 ? Number(v).toFixed(3) : Number(v).toFixed(2)}`);
+const RULE_NAME = (r) => (r === 'replay' ? 'IBM TabFormer replay' : RULES[r] || r);
+
+function viewMetrics() {
+  if (S.metrics === undefined || S.metricsAll === undefined) { loadMetrics(); return empty('<span class="spin"></span> Loading metrics…'); }
+  const m = S.metrics, all = S.metricsAll, recorded = MODE !== 'live';
+  const head = `<section class="panel"><div class="row"><div><div class="eyebrow">Evaluation${m?.run_id ? ` · run ${esc(m.run_id)} · ${esc(STATUS_LABEL[m.status] || m.status || '')}` : ''}</div>
+      <h1 style="margin:0">Metrics</h1><p class="muted" style="margin:.2rem 0 0">${m?.title ? esc(m.title) : 'How well did the agents, the sandboxes and the test suite do?'}</p></div><span class="spacer"></span>
+      ${recorded ? '<span class="chip v-error">recorded example · real 10k run on our Vultr deployment</span>' : ''}
+      ${S.metricsFor ? `<button class="btn small" data-act="metrics-run" data-id="${esc(S.run?.id || '')}">Back to current run</button>` : ''}<button class="btn small" data-act="metrics-refresh">Refresh</button></div></section>`;
+  let body = '';
+  if (!m || m.error) {
+    body = `<section class="panel"><p class="muted">${!m ? 'Select or start a run to see its metrics.' : m.status === 404 ? 'No metrics for this run yet (or this backend has no metrics endpoint).' : esc(m.error)}</p></section>`;
+  } else {
+    const c = m.counts || {}, d = m.detection || {}, cov = m.coverage || {}, q = m.ai_quality || {}, ag = m.agents || {}, sb = m.sandboxes || {};
+    const tile = (label, big, sub, cls = '') => `<div class="mtile ${cls}"><small>${label}</small><b>${big}</b><span>${sub}</span></div>`;
+    const score = `<div class="mgrid">
+      ${tile('Defect caught', d.defect_caught ? '✓ Yes' : '— Not yet', d.defect_caught ? `found in ${dur(d.seconds_to_first_finding)} · ${esc(d.severity || '')}${d.money_at_risk_cents ? ` · ${usd(d.money_at_risk_cents)} at risk` : ''}` : 'no regression found so far', d.defect_caught ? 'good' : '')}
+      ${tile('Pass rate', pct(m.pass_rate_pct), `${num(c.passed)} of ${num(c.total)} · ${num(c.regression)} regressions`, c.regression ? 'warn' : 'good')}
+      ${tile('Throughput', `${m.tests_per_second ?? '—'}<em>tests/s</em>`, `${num(c.total)} tests in ${dur(m.wall_seconds)}`)}
+      ${tile('AI expectation accuracy', pct(q.expectation_correct_pct), `${num(q.executed)} AI-written tests executed · ${num(q.both_wrong)} both-wrong`, q.expectation_correct_pct >= 95 ? 'good' : '')}
+      ${tile('Sandboxes', num(sb.count), `${sb.gvisor === sb.count && sb.count ? 'all gVisor ✓' : `${num(sb.gvisor)} gVisor · ${num(sb.not_gvisor)} not`} · ${sb.destroyed_all ? 'all destroyed ✓' : 'not all destroyed ✗'}`, sb.gvisor === sb.count && sb.destroyed_all ? 'good' : 'bad')}
+      ${tile('Total AI cost', cost(ag.cost_usd), `${num(ag.tokens)} tokens · ${num(ag.llm_calls)} Vultr inference calls`)}
+    </div>
+    ${d.boundary || d.root_cause ? `<div class="mdetect">${d.boundary ? `<p><b>Boundary</b> ${esc(d.boundary)}</p>` : ''}${d.root_cause ? `<p><b>Root cause</b> ${esc(d.root_cause)}</p>` : ''}${d.decision ? `<p><b>Decision</b> ${esc(d.decision)}</p>` : ''}</div>` : ''}`;
+
+    const per = Object.entries(cov.per_rule || {}).sort(([a], [b]) => (a === 'replay') - (b === 'replay'));
+    const SEG = [['pass', 'pass', 'var(--good)'], ['regression', 'regression', 'var(--bad)'], ['both_wrong', 'both wrong', 'var(--warn)'], ['error', 'error', 'var(--faint)'], ['noise', 'noise', 'var(--line2)']];
+    const bar = (v) => { const n = v.cases || SEG.reduce((t, [k]) => t + (v[k] || 0), 0) || 1;
+      return `<div class="sbar" role="img" aria-label="${esc(SEG.filter(([k]) => v[k]).map(([k, l]) => `${v[k]} ${l}`).join(', '))}">${SEG.filter(([k]) => v[k]).map(([k, l, col]) => `<i style="width:${(100 * v[k] / n).toFixed(2)}%;background:${col}" title="${v[k]} ${l}"></i>`).join('')}</div>`; };
+    const coverage = `<section class="panel"><div class="row"><h2 style="margin:0">Coverage by rule</h2><span class="spacer"></span>
+        <span class="chip">${num(cov.rules_with_cases)} of ${num(cov.rules_planned)} planned rules have tests</span>
+        ${Object.entries(cov.cases_by_source || {}).map(([k, v]) => `<span class="chip">${esc(SRC[k] || k)}: ${num(v)}</span>`).join('')}</div>
+      <div class="legend">${SEG.slice(0, 4).map(([, l, col]) => `<span><i style="background:${col}"></i>${l}</span>`).join('')}</div>
+      <div class="tbl-wrap"><table class="mtable"><thead><tr><th>Rule</th><th class="num">Cases</th><th style="width:40%">Outcome</th><th class="num">Pass</th><th class="num">Regression</th><th class="num">Both wrong</th><th class="num">Error</th></tr></thead><tbody>
+      ${per.map(([r, v]) => `<tr><td>${r === 'replay' ? `<b>${esc(RULE_NAME(r))}</b>` : esc(RULE_NAME(r))}</td><td class="num">${num(v.cases)}</td><td>${bar(v)}</td><td class="num">${num(v.pass)}</td><td class="num ${v.regression ? 'bad' : ''}">${num(v.regression)}</td><td class="num">${num(v.both_wrong)}</td><td class="num">${num(v.error)}</td></tr>`).join('')}
+      </tbody></table></div></section>`;
+
+    const agents = Object.entries(ag.per_agent || {});
+    const aiAgents = `<section class="panel"><h2>AI agents</h2>
+      <p class="muted" style="margin-top:0">GLM-5.3 does the reasoning (coordinator, planner, triage); DeepSeek-v4.1-flash does fast structured test writing. All calls go to Vultr Serverless Inference.</p>
+      <div class="tbl-wrap"><table class="mtable"><thead><tr><th>Agent</th><th>Model</th><th class="num">Calls</th><th class="num">Tokens in</th><th class="num">Tokens out</th><th class="num">Avg latency</th><th class="num">p95 latency</th><th class="num">Cost</th></tr></thead><tbody>
+      ${agents.map(([n, a]) => `<tr><td><span class="ag-c" style="--c:${col(n)};font-weight:700;text-transform:capitalize">${esc(nm(n))}</span></td><td><span class="badge vultr">Vultr · ${esc(a.model || '?')}</span></td><td class="num">${num(a.calls)}</td><td class="num">${num(a.tokens_in)}</td><td class="num">${num(a.tokens_out)}</td><td class="num">${secs1(a.avg_latency_ms)}</td><td class="num">${secs1(a.p95_latency_ms)}</td><td class="num">${cost(a.cost_usd)}</td></tr>`).join('')}
+      <tr class="total"><td>Total</td><td>${num(ag.loop_iterations)} coordinator loops · ${num(ag.agent_messages)} agent messages</td><td class="num">${num(ag.llm_calls)}</td><td class="num">${num(agents.reduce((t, [, a]) => t + (a.tokens_in || 0), 0))}</td><td class="num">${num(agents.reduce((t, [, a]) => t + (a.tokens_out || 0), 0))}</td><td></td><td></td><td class="num">${cost(ag.cost_usd)}</td></tr>
+      </tbody></table></div></section>`;
+
+    const top = Math.max(1, q.proposed || 0);
+    const stepRow = (label, v, note, cls = '') => `<div class="fstep ${cls}"><span class="fl">${label}</span><div class="fbar"><i style="width:${Math.max(v ? 3 : 0, (100 * (v || 0)) / top).toFixed(1)}%"></i></div><b>${num(v)}</b><span class="muted">${note}</span></div>`;
+    const correct = q.executed && q.expectation_correct_pct != null ? Math.round((q.executed * q.expectation_correct_pct) / 100) : 0;
+    const quality = `<section class="panel"><h2>AI test quality</h2><div class="funnel">
+      ${stepRow('Proposed by the generator', q.proposed, 'ISO 8583 test cases written by the LLM')}
+      ${stepRow('Rejected by the validator', q.rejected_by_validator, `schema / bounds check · ${num(q.repaired_by_validator)} repaired`, 'minus')}
+      ${stepRow('Rejected by the human', q.rejected_by_human, 'at the approval gate', 'minus')}
+      ${stepRow('Executed in sandboxes', q.executed, 'approved, then run in gVisor')}
+      ${stepRow('Correct expectations', correct, `${pct(q.expectation_correct_pct)} matched the legacy switch · ${num(q.both_wrong)} both-wrong`, 'good')}
+      ${stepRow('Follow-ups designed by triage', q.followups_designed_by_triage, 'boundary search inside the human bounds', 'extra')}
+      </div></section>`;
+
+    const bp = sb.by_pool || {};
+    const sandboxes = `<section class="panel"><h2>Sandboxes</h2><div class="mgrid small">
+      ${tile('Agent pool', num(bp.agent), 'agent-written tests · switchproof-agent')}
+      ${tile('Data pool', num(bp.data), 'replay data, no agent code · switchproof-data')}
+      ${tile('gVisor', `${num(sb.gvisor)}/${num(sb.count)}`, sb.not_gvisor ? `${num(sb.not_gvisor)} ran without gVisor ✗` : 'every sandbox under runsc ✓', sb.not_gvisor ? 'bad' : 'good')}
+      ${tile('Destroyed', sb.destroyed_all ? '✓ all' : '✗', 'Job deleted after each batch', sb.destroyed_all ? 'good' : 'bad')}
+      ${tile('Avg time per case', sb.case_ms_avg != null ? `${sb.case_ms_avg}<em>ms</em>` : '—', 'inside the sandbox')}
+      </div></section>`;
+    body = score + coverage + `<div class="grid2">${quality}${sandboxes}</div>` + aiAgents;
+  }
+  const rows = Array.isArray(all) ? [...all].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))) : null;
+  const cur = S.metricsFor || S.run?.id;
+  const runs = `<section class="panel"><h2>All runs</h2>${!rows ? `<p class="muted">${all?.status === 404 ? 'This backend has no run comparison endpoint.' : esc(all?.error || 'Unavailable.')}</p>`
+    : `<div class="tbl-wrap"><table class="mtable runs"><thead><tr><th>Run</th><th>Status</th><th class="num">Tests</th><th class="num">Regressions</th><th>Caught?</th><th class="num">Time to find</th><th class="num">AI tests</th><th class="num">Accuracy</th><th class="num">Tokens</th><th class="num">Cost</th><th class="num">Sandboxes</th><th class="num">Duration</th><th>Models</th></tr></thead><tbody>
+    ${rows.map((r) => `<tr class="${r.run_id === cur ? 'cur' : ''}"><td><button class="linkbtn" data-act="metrics-run" data-id="${esc(r.run_id)}" ${r.run_id === cur ? 'aria-current="true"' : ''}>${esc(r.title || r.run_id)}</button><small class="mono">${esc(r.run_id)} · ${dt(r.created_at)}</small></td>
+      <td><span class="chip">${esc(STATUS_LABEL[r.status] || r.status)}</span></td><td class="num">${num(r.tests)}</td><td class="num ${r.regressions ? 'bad' : ''}">${num(r.regressions)}</td>
+      <td>${r.defect_caught ? '<span class="good">✓ caught</span>' : '<span class="muted">—</span>'}</td><td class="num">${dur(r.seconds_to_first_finding)}</td><td class="num">${num(r.ai_tests)}</td>
+      <td class="num">${pct(r.expectation_correct_pct)}</td><td class="num">${num(r.tokens)}</td><td class="num">${cost(r.cost_usd)}</td><td class="num">${num(r.sandboxes)}</td><td class="num">${dur(r.wall_seconds)}</td>
+      <td>${(r.models || []).map((x) => `<span class="badge vultr">${esc(x)}</span>`).join(' ')}</td></tr>`).join('')}</tbody></table></div><p class="muted" style="font-size:.8rem">Click a run to open its metrics.</p>`}</section>`;
+  return head + body + runs;
+}
+
 // ---------- render ----------
-const VIEW_FN = { overview: viewOverview, rules: viewRules, review: viewReview, run: viewRun, evidence: viewEvidence, decision: viewDecision, agents: viewAgents, infra: viewInfra, rl: viewRL };
+const VIEW_FN = { metrics: viewMetrics, overview: viewOverview, rules: viewRules, review: viewReview, run: viewRun, evidence: viewEvidence, decision: viewDecision, agents: viewAgents, infra: viewInfra, rl: viewRL };
 
 function renderTop() {
   const r = S.run, sys = S.system;
@@ -845,13 +941,14 @@ function renderTop() {
 }
 
 const reached = (id) => { const r = S.run, st = r ? stage(r.status) : -1;
-  return { overview: true, rules: true, review: !!r, run: st >= stage('running'), evidence: st >= stage('running'), decision: st >= stage('awaiting_decision'), agents: !!r, infra: true, rl: !!r }[id]; };
+  return { metrics: true, overview: true, rules: true, review: !!r, run: st >= stage('running'), evidence: st >= stage('running'), decision: st >= stage('awaiting_decision'), agents: !!r, infra: true, rl: !!r }[id]; };
 
 function secKey(id) {
   const r = S.run, busy = [S.busy, S.me?.can_act], fl = S.flashUntil > Date.now();
   switch (id) {
     case 'overview': return [r?.id, r?.status, r?.title, r?.counts, r?.proofs?.length, r?.sandboxes_used, r?.triage, r?.github, r?.cases?.map((c) => c.status), r?.decision];
     case 'rules': return [r?.id, r?.created_at, ...busy];
+    case 'metrics': return [r?.id, S.metricsFor, S.metrics, S.metricsAll];
     case 'review': return [r?.id, r?.status, r?.cases, r?.plan, r?.replay, S.editing, ...busy, r && !casesOf(r).length ? S.events.length : 0];
     case 'run': return [r?.id, r?.status, r?.counts, r?.proofs, r?.replay, S.events.length, S.agents, S.findingSeen, fl, S.system?.sandbox_host?.mode];
     case 'evidence': return [r?.id, r?.status, r?.triage, r?.github, r?.proofs?.length, S.results ? S.results.length : -1, S.triageResults?.length, S.verdict, S.sel, S.findingSeen, fl, S.system?.sandbox_host?.mode];
@@ -1009,6 +1106,9 @@ const ACTIONS = {
   'case-status': (b) => act(() => api('PATCH', `/api/runs/${S.run.id}/cases/${b.dataset.id}`, { status: b.dataset.v })),
   'approve-all': () => act(async () => { const j = await api('POST', `/api/runs/${S.run.id}/approve_all`); toast(`Approved ${j.approved} tests`); }),
   execute: () => act(() => api('POST', `/api/runs/${S.run.id}/execute`)),
+  'metrics-run': (b) => { const id = b.dataset.id; if (id !== S.run?.id && S.runs.some((x) => x.id === id)) return selectRun(id, 'metrics');
+    S.metricsFor = id === S.run?.id ? null : id; S.metrics = undefined; render(true); window.scrollTo(0, 0); },
+  'metrics-refresh': () => { S.metrics = S.metricsAll = undefined; render(true); },
   rl: () => act(async () => { await api('POST', `/api/runs/${S.run.id}/rl`); S.run.rl = { status: 'running' }; }),
   'share-create': () => act(async () => { S.share = await api('POST', `/api/runs/${S.run.id}/share`); S.shareWas = true; }),
   'share-close': () => act(async () => { S.share = await api('DELETE', `/api/runs/${S.run.id}/share`); }),
@@ -1062,7 +1162,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('#switch
 (async function boot() {
   if (['dark', 'light'].includes(qs.get('theme'))) document.documentElement.dataset.theme = qs.get('theme');
   const banner = { mock: 'Mock mode: fixture data, no backend. Numbers and ids are placeholders; the data set is IBM TabFormer (public synthetic) and the defect is seeded.',
-    snapshot: 'Recorded run from our Vultr deployment — live app is behind NetBird. Read-only replay; synthetic data, seeded defect.' }[MODE];
+    snapshot: 'Recorded run from our Vultr deployment (Atlanta): real Vultr Kubernetes sandboxes and Vultr Serverless Inference. Read-only replay; synthetic data, seeded defect.' }[MODE];
   if (banner) { $('#mode').textContent = banner; $('#mode').hidden = false; }
   try { if (MODE === 'mock') { await loadMock(); if (qs.get('viewer') === '1') FX.me = { auth: 'netbird', user: null, groups: [], role: 'viewer', can_act: false }; } } catch (e) { toast(`Could not load mock fixtures: ${e.message}`, 'err'); }
   // run from #<id>/<view> or ?run=<id> (links in GitHub issues use ?run=); read before the first render rewrites the hash
