@@ -1,5 +1,8 @@
 # SwitchProof
 
+**Live demo (recorded run on Vultr, read-only):** https://atl2.vultrobjects.com/switchproof-roshni/site/index.html?snapshot=export.json — 10,022 tests in 42 gVisor sandboxes on Vultr Kubernetes, AI by Vultr Serverless Inference (GLM-5.3 + DeepSeek-v4.1-flash).
+
+
 **AI agents that test a bank's new payment switch against its old one before go-live. A human approves every test, and every test runs in a throwaway gVisor sandbox.**
 
 Built for the Agent Arena hackathon (Vultr + NetBird), *Blast Radius Zero* track.

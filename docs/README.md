@@ -1,5 +1,8 @@
 # SwitchProof
 
+**Live demo (recorded run on Vultr, read-only):** https://atl2.vultrobjects.com/switchproof-roshni/site/index.html?snapshot=export.json — 10,022 tests in 42 gVisor sandboxes on Vultr Kubernetes, AI by Vultr Serverless Inference (GLM-5.3 + DeepSeek-v4.1-flash).
+
+
 **AI agents that test a bank's new payment switch against its old one before go-live. A human approves every test, and every test runs in a throwaway gVisor sandbox.**
 
 Built for the Agent Arena hackathon (Vultr + NetBird), *Blast Radius Zero* track.
@@ -75,14 +78,14 @@ More detail, including a sequence diagram: [docs/ARCHITECTURE.md](ARCHITECTURE.m
 
 A Vultr firewall group allows SSH from one IP only. No app port is public. The sandbox pods cannot reach the metadata service, and the probe proves it.
 
-Setup: [infra/README.md](../infra/README.md).
+Setup: [infra/README.md](infra/README.md).
 
 ## How NetBird is used
 
 - **Zero-port access**: the public URL is served by the NetBird reverse proxy over WireGuard, with no inbound app ports on the Vultr VM. The Infrastructure page shows the NetBird peers (for example the admin laptop, P2P) with path and latency.
 - **Identity and roles**: NetBird SSO identifies the user. Members of the `testers` group can approve, run and decide. Everyone else gets a read-only view, and the server records the authenticated identity on the decision.
 - **Lifecycle-bound reviewer link**: while a run awaits a decision, a tester can open a temporary PIN-protected link (`netbird expose`). It closes automatically when the migration is blocked or approved.
-- The control plane reaches the sandbox cluster only through the Kubernetes API over TLS, with a token scoped to the sandbox namespace. Details: [infra/netbird.md](../infra/netbird.md).
+- The control plane reaches the sandbox cluster only through the Kubernetes API over TLS, with a token scoped to the sandbox namespace. Details: [infra/netbird.md](infra/netbird.md).
 
 ## Five safety checkpoints (the Infrastructure page)
 
@@ -155,4 +158,4 @@ Built by Roshni and team during the hackathon, with AI coding assistants helping
 
 ## License
 
-MIT, see [LICENSE](../LICENSE).
+MIT, see [LICENSE](LICENSE).
