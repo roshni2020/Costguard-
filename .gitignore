@@ -7,3 +7,7 @@ __pycache__/
 # RocketRide scaffolding - not used by SwitchProof
 .claude/
 .github/copilot-instructions.md
+# cluster credentials - never commit
+vke*.yaml
+*kubeconfig*
+*.kubeconfig
