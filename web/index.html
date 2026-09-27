@@ -28,25 +28,30 @@
   <nav id="rail" class="secnav" aria-label="Sections"></nav>
   <div id="mode" class="mode" hidden></div>
 
-  <section id="hero" class="hero3d" data-sec="hero" aria-label="Live switch view">
-    <div id="scene" class="scene"></div>
-    <div id="hero-fallback" class="hero-fallback" hidden></div>
-    <div class="hero-overlay">
-      <div id="hero-status" class="hero-status" role="status" aria-live="polite">Loading…</div>
-      <div id="hero-sub" class="hero-sub"></div>
-    </div>
-    <div class="hero-hint" aria-hidden="true">Card terminal → OLD A · OLD B · NEW · click a tower for evidence</div>
-  </section>
+  <!-- The one 3D scene. app.js moves it into the current page's .hero-slot, or parks it here (hidden = paused). -->
+  <div id="hero-park" hidden>
+    <section id="hero" class="hero3d" aria-label="Live switch view">
+      <div id="scene" class="scene"></div>
+      <div id="hero-fallback" class="hero-fallback" hidden></div>
+      <div class="hero-overlay">
+        <div id="hero-status" class="hero-status" role="status" aria-live="polite">Loading…</div>
+        <div id="hero-sub" class="hero-sub"></div>
+        <div id="hero-cta" class="hero-cta"></div>
+      </div>
+      <div class="hero-hint" aria-hidden="true">Card terminal → OLD A · OLD B · NEW · click a tower for evidence</div>
+    </section>
+  </div>
 
-  <main id="main" tabindex="-1">
-    <section class="sec" id="sec-rules" data-sec="rules" aria-labelledby="h-rules"><h2 class="sec-h" id="h-rules"><span class="n">1</span>Rules</h2><div class="sec-body"></div></section>
-    <section class="sec" id="sec-review" data-sec="review" aria-labelledby="h-review"><h2 class="sec-h" id="h-review"><span class="n">2</span>Approve</h2><div class="sec-body"></div></section>
-    <section class="sec" id="sec-run" data-sec="run" aria-labelledby="h-run"><h2 class="sec-h" id="h-run"><span class="n">3</span>Run</h2><div class="sec-body"></div></section>
-    <section class="sec" id="sec-evidence" data-sec="evidence" aria-labelledby="h-evidence"><h2 class="sec-h" id="h-evidence"><span class="n">4</span>Evidence</h2><div class="sec-body"></div></section>
-    <section class="sec" id="sec-decision" data-sec="decision" aria-labelledby="h-decision"><h2 class="sec-h" id="h-decision"><span class="n">5</span>Decision</h2><div class="sec-body"></div></section>
-    <section class="sec" id="sec-agents" data-sec="agents" aria-labelledby="h-agents"><h2 class="sec-h" id="h-agents"><span class="n">A</span>Agents</h2><div class="sec-body"></div></section>
-    <section class="sec" id="sec-infra" data-sec="infra" aria-labelledby="h-infra"><h2 class="sec-h" id="h-infra"><span class="n">I</span>Infrastructure</h2><div class="sec-body"></div></section>
-    <section class="sec" id="sec-rl" data-sec="rl" aria-labelledby="h-rl"><h2 class="sec-h" id="h-rl"><span class="n">R</span>RL explorer</h2><div class="sec-body"></div></section>
+  <main id="main">
+    <section class="sec page" id="sec-overview" data-sec="overview" aria-labelledby="h-overview" hidden><h2 class="sec-h sr" id="h-overview" tabindex="-1"><span class="n">◎</span>Overview</h2><div class="hero-slot"></div><div class="sec-body"></div></section>
+    <section class="sec page" id="sec-rules" data-sec="rules" aria-labelledby="h-rules" hidden><h2 class="sec-h" id="h-rules" tabindex="-1"><span class="n">1</span>Rules</h2><div class="sec-body"></div></section>
+    <section class="sec page" id="sec-review" data-sec="review" aria-labelledby="h-review" hidden><h2 class="sec-h" id="h-review" tabindex="-1"><span class="n">2</span>Approve</h2><div class="sec-body"></div></section>
+    <section class="sec page" id="sec-run" data-sec="run" aria-labelledby="h-run" hidden><h2 class="sec-h" id="h-run" tabindex="-1"><span class="n">3</span>Run</h2><div class="hero-slot"></div><div class="sec-body"></div></section>
+    <section class="sec page" id="sec-evidence" data-sec="evidence" aria-labelledby="h-evidence" hidden><h2 class="sec-h" id="h-evidence" tabindex="-1"><span class="n">4</span>Evidence</h2><div class="hero-slot"></div><div class="sec-body"></div></section>
+    <section class="sec page" id="sec-decision" data-sec="decision" aria-labelledby="h-decision" hidden><h2 class="sec-h" id="h-decision" tabindex="-1"><span class="n">5</span>Decision</h2><div class="hero-slot"></div><div class="sec-body"></div></section>
+    <section class="sec page" id="sec-agents" data-sec="agents" aria-labelledby="h-agents" hidden><h2 class="sec-h" id="h-agents" tabindex="-1"><span class="n">A</span>Agents</h2><div class="sec-body"></div></section>
+    <section class="sec page" id="sec-infra" data-sec="infra" aria-labelledby="h-infra" hidden><h2 class="sec-h" id="h-infra" tabindex="-1"><span class="n">I</span>Infrastructure</h2><div class="sec-body"></div></section>
+    <section class="sec page" id="sec-rl" data-sec="rl" aria-labelledby="h-rl" hidden><h2 class="sec-h" id="h-rl" tabindex="-1"><span class="n">R</span>RL explorer</h2><div class="sec-body"></div></section>
   </main>
   <div id="toasts" role="status" aria-live="polite"></div>
   <script type="module" src="app.js"></script>

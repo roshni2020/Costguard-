@@ -47,13 +47,14 @@ kubectl -n switchproof-agent run gvisor-smoke --restart=Never --image="$RUNNER_I
   $PS_JSON
   "securityContext": {"runAsNonRoot": true, "runAsUser": 10001, "seccompProfile": {"type": "RuntimeDefault"}},
   "containers": [{"name": "gvisor-smoke", "image": "$RUNNER_IMAGE", "command": ["python", "-c", "import platform; print(platform.release())"],
+    "resources": {"limits": {"cpu": "1", "memory": "512Mi"}, "requests": {"cpu": "250m", "memory": "256Mi"}},
     "securityContext": {"readOnlyRootFilesystem": true, "allowPrivilegeEscalation": false, "capabilities": {"drop": ["ALL"]}}}]}}
 JSON
 )" >/dev/null
 kubectl -n switchproof-agent wait --for=jsonpath='{.status.phase}'=Succeeded pod/gvisor-smoke --timeout=300s
 KERNEL="$(kubectl -n switchproof-agent logs gvisor-smoke)"
 kubectl -n switchproof-agent delete pod gvisor-smoke >/dev/null
-[ "$KERNEL" = "4.4.0" ] && echo "  PASS kernel inside the sandbox: $KERNEL (gVisor)" || { echo "  FAIL kernel inside the sandbox: $KERNEL"; exit 1; }
+case "$KERNEL" in *gvisor*|4.4.0) echo "  PASS kernel inside the sandbox: $KERNEL (gVisor)";; *) echo "  FAIL kernel inside the sandbox: $KERNEL"; exit 1;; esac
 
 log "Credentials for the control plane (namespace-scoped token, cluster CA)"
 mkdir -p /etc/switchproof

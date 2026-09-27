@@ -109,7 +109,7 @@ sudo KUBECONFIG=/root/vke.yaml \
 This script:
 1. installs gVisor on every node (`infra/k8s/gvisor-installer.yaml`);
 2. creates **two** locked sandbox namespaces, `switchproof-agent` and `switchproof-data` (`infra/k8s/sandbox.yaml`: RuntimeClass `gvisor`, *restricted* pod security, quota, deny-all NetworkPolicy, a dispatcher account that can only manage Jobs there), pinned to their own node pools;
-3. proves a pod really runs under gVisor (kernel `4.4.0` inside);
+3. proves a pod really runs under gVisor (the kernel inside reports `…-gvisor`);
 4. hands the control plane a namespace-scoped token.
 
 **B4. NetBird.** Zero open ports, SSO/PIN roles, reviewer links:

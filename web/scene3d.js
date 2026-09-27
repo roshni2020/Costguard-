@@ -282,7 +282,9 @@ export function createScene(el, { onTowerClick, onError } = {}) {
   const onVis = () => (document.hidden ? stop() : start()); document.addEventListener('visibilitychange', onVis);
   const resize = () => { const w = el.clientWidth || 1, h = el.clientHeight || 1, a = w / h; renderer.setSize(w, h, false); camera.aspect = a;
     // Narrow screens: back the camera off so the whole switch row still fits horizontally.
-    const z = a >= 1.5 ? 18.2 : Math.min(52, (18.2 * 1.5) / a); camBase.set(0.9, 9.6 * (z / 18.2), z);
+    // Wide banners (Run/Evidence/Decision): move in so the towers stay legible.
+    const z = a >= 2.2 ? Math.max(14, 18.2 * Math.pow(2.2 / a, 0.45)) : a >= 1.5 ? 18.2 : Math.min(52, (18.2 * 1.5) / a);
+    camBase.set(0.9, 9.6 * (z / 18.2), z); camTarget.set(1.4, a >= 2.2 ? 1.6 : 0.5, 0.4);
     scene.fog.near = 20 + (z - 18.2); scene.fog.far = 46 + (z - 18.2);
     camera.updateProjectionMatrix(); canvas.style.width = '100%'; canvas.style.height = '100%'; };
   const ro = new ResizeObserver(resize); ro.observe(el); resize();

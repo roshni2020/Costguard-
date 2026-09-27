@@ -1,4 +1,4 @@
-// SwitchProof UI ("mission control", one scrolling page + three.js hero): vanilla ES module, no build step.
+// SwitchProof UI ("mission control": one page per step, hash-routed, with a three.js scene): vanilla ES module, no build step.
 // Modes: live (default), ?mock=1, ?snapshot=<export.json url>. Optional ?theme=dark|light.
 const qs = new URLSearchParams(location.search);
 const MODE = qs.has('snapshot') ? 'snapshot' : qs.get('mock') === '1' ? 'mock' : 'live';
@@ -27,14 +27,19 @@ const STATUS_VIEW = { draft: 'review', planning: 'review', awaiting_approval: 'r
 const STATUS_LABEL = { draft: 'Draft', planning: 'Agents planning', awaiting_approval: 'Awaiting your approval', running: 'Running in sandboxes',
   triaging: 'Triage investigating', awaiting_decision: 'Awaiting decision', blocked: 'Migration blocked', approved_for_release: 'Release approved' };
 const ORDER = Object.keys(STATUS_VIEW);
-const SECTIONS = ['rules', 'review', 'run', 'evidence', 'decision', 'agents', 'infra', 'rl'];
-// Where to scroll when a run reaches a status (null: stay put).
-const STATUS_SEC = { draft: 'review', planning: 'review', awaiting_approval: 'review', running: 'hero', triaging: null, awaiting_decision: 'evidence', blocked: 'hero', approved_for_release: 'hero' };
+const PAGES = ['overview', 'rules', 'review', 'run', 'evidence', 'decision', 'agents', 'infra', 'rl'];
+// Page to open when a run reaches a status (null: stay put).
+const STATUS_PAGE = { draft: null, planning: null, awaiting_approval: 'review', running: 'run', triaging: null, awaiting_decision: 'evidence', blocked: 'decision', approved_for_release: 'decision' };
+// URL names: the Approve page is #…/approve (internally 'review'); old links (#…/hero, /safety) still work.
+const toHash = (p) => (p === 'review' ? 'approve' : p);
+const fromHash = (h) => ({ approve: 'review', hero: 'overview', safety: 'infra' }[h] || h);
+// The one WebGL scene: full size on the overview, a compact banner on Run/Evidence/Decision, parked (paused) elsewhere.
+const SCENE_PAGES = { overview: 'full', run: 'compact', evidence: 'compact', decision: 'compact' };
 const CONV_KINDS = ['message', 'tool_call', 'tool_result', 'llm_call', 'decision'];
 
 const S = { runs: [], run: null, events: [], agents: [], system: null, probe: null, results: null, triageResults: null,
   view: 'rules', verdict: 'regression', sel: null, editing: null, convAgent: '', showLLM: true, findingSeen: false, flashUntil: 0,
-  busy: false, probing: false, loadingResults: false, dirty: false, lastKey: '', replayStep: 0, seen: new Set(), me: null, share: undefined, shareWas: false, active: 'hero', keys: {}, dirtySec: new Set(), replayOn: false };
+  busy: false, probing: false, loadingResults: false, dirty: false, lastKey: '', replayStep: 0, seen: new Set(), me: null, share: undefined, shareWas: false, page: 'overview', keys: {}, dirtySec: new Set(), replayOn: false };
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 // ---------- helpers ----------
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -264,8 +269,8 @@ async function selectRun(id, view) {
     addEvents(evs);
     S.findingSeen = S.events.some((e) => e.kind === 'finding'); S.flashUntil = 0;
     S.agents = await api('GET', `/api/runs/${id}/agents`).catch(() => deriveAgents(S.events, run.status));
-    render(true);
-    scrollToSec(view || STATUS_SEC[run.status]);
+    S.keys = {};
+    showPage(view || 'overview', { replace: true });
     return;
   } catch (e) { toast(`Could not open run: ${e.message}`, 'err'); }
   render(true);
@@ -277,7 +282,7 @@ async function refreshRun() {
   if (S.run?.id !== id) return;
   S.run = run; addEvents(evs);
   S.agents = await api('GET', `/api/runs/${id}/agents`).catch(() => deriveAgents(S.events, run.status));
-  if (run.status !== prev) { S.results = S.triageResults = null; if (STATUS_SEC[run.status]) setTimeout(() => scrollToSec(STATUS_SEC[run.status]), 120); }
+  if (run.status !== prev) { S.results = S.triageResults = null; if (STATUS_PAGE[run.status]) setTimeout(() => go(STATUS_PAGE[run.status]), 120); }
 }
 
 async function loadResults() {
@@ -396,9 +401,9 @@ function heroInner(mode = 'run') {
     if (!s) return heroSvg({ packets: false });
     const dup = res.steps.some((t) => t.old_a_code === '94' && t.new_code === '00');
     const cs = c.steps[i] || {};
-    return heroSvg({ codes: { old_a: s.old_a_code, old_b: s.old_b_code, new: s.new_code }, expected: s.expected_code,
-      callout: i === n - 1 ? calloutText(extraDebit(res.balance_delta_cents), dup) : '', label: `${cs.mti || ''} ${MTI[cs.mti] || ''} · STAN ${cs.stan || ''} · t+${secs(cs.at_offset_s)}s` })
-      + `<div class="cap"><span class="chip">step ${i + 1}/${n}</span><b>${esc(stepText(cs, c.steps[i - 1]))}</b><span>expected ${code(s.expected_code)}</span><span class="spacer"></span>
+    return (scene ? '' : heroSvg({ codes: { old_a: s.old_a_code, old_b: s.old_b_code, new: s.new_code }, expected: s.expected_code,
+      callout: i === n - 1 ? calloutText(extraDebit(res.balance_delta_cents), dup) : '', label: `${cs.mti || ''} ${MTI[cs.mti] || ''} · STAN ${cs.stan || ''} · t+${secs(cs.at_offset_s)}s` }))
+      + `<div class="cap">${scene ? `<span class="chip">replaying in the 3D view above · ${esc(`${s.old_a_code}/${s.old_b_code}/${s.new_code}`)}</span>` : ''}<span class="chip">step ${i + 1}/${n}</span><b>${esc(stepText(cs, c.steps[i - 1]))}</b><span>expected ${code(s.expected_code)}</span><span class="spacer"></span>
         ${res.steps.map((_, j) => `<button class="btn small" data-act="replay-step" data-i="${j}" aria-pressed="${j === i}" aria-label="Show step ${j + 1}">${j + 1}</button>`).join('')}
         <button class="btn small" data-act="replay">Replay ▶</button></div>`;
   }
@@ -781,8 +786,28 @@ function viewRL() {
     ${panels ? `<div class="rl-grid">${panels}</div>` : ''}${rl.trained_on_bugs?.length ? `<p class="muted" style="font-size:.8rem">Trained on: <span class="mono">${esc(rl.trained_on_bugs.join(', '))}</span></p>` : ''}</section>`;
 }
 
+function viewOverview() {
+  const r = S.run;
+  if (!r) return `<section class="panel"><h3>No run yet</h3><p class="muted">Describe what the new switch must do; Vultr AI writes ISO 8583 tests and you approve every one before anything runs.</p>${roLine()}
+    <button class="btn primary" data-act="nav" data-v="rules">Write the rules →</button></section>`;
+  const c = r.counts, ps = r.proofs || [], n = (p) => ps.filter((x) => poolOf(x) === p).length, gh = r.github || {};
+  const cases = casesOf(r), prop = cases.filter((x) => x.status === 'proposed').length, st = stage(r.status);
+  const gate = st >= stage('running') ? ['Open', 'good', 'every test decided'] : gateOpen(r) ? ['Ready', 'good', 'every test decided'] : ['Locked', 'warn', `${num(prop)} of ${num(cases.length)} tests waiting`];
+  const tri = r.triage ? `<b class="bad">${esc(r.triage.severity)}</b> · ${esc(r.triage.root_cause_hypothesis)} · money at risk ${usd(r.triage.money_at_risk_cents)}`
+    : st >= stage('triaging') ? 'Triage agent is running follow-ups…' : 'Starts after the sandbox run.';
+  const cell = (label, big, sub, cls = '', to = '') => `<${to ? `button data-act="nav" data-v="${to}"` : 'div'} class="sumcell ${cls}"><small>${label}</small><b>${big}</b><span>${sub}</span></${to ? 'button' : 'div'}>`;
+  return `<section class="panel summary"><div class="eyebrow">Run ${esc(r.id)} · ${esc(STATUS_LABEL[r.status] || r.status)} · ${dt(r.created_at)}</div><h2 style="margin:.1rem 0 .7rem">${esc(r.title)}</h2>
+    <div class="sumgrid">
+      ${cell('Tests executed', num(c.total), `${num(c.passed)} passed · ${num(c.regression)} regressions · ${num(c.error)} errors`, c.regression ? 'bad' : '', 'run')}
+      ${cell('Sandboxes', num(r.sandboxes_used), `${n('agent')} agent pool · ${n('data')} data pool${ps.length && r.status !== 'running' ? ' · all destroyed ✓' : ''}`, '', 'infra')}
+      ${cell('Human gate', `${LOCK(gate[0] !== 'Locked', 16)} ${gate[0]}`, gate[2], gate[1], 'review')}
+      ${cell('Release gate', esc(gh.status_state || '—'), r.decision ? `${r.decision.decision === 'block' ? 'blocked' : 'approved'} by ${esc(r.decision.reviewer)}` : 'GitHub commit status', gh.status_state === 'failure' ? 'bad' : gh.status_state === 'success' ? 'good' : '', 'decision')}
+    </div>
+    <p class="tri"><span class="eyebrow" style="display:inline">Triage</span> ${tri}</p></section>`;
+}
+
 // ---------- render ----------
-const VIEW_FN = { rules: viewRules, review: viewReview, run: viewRun, evidence: viewEvidence, decision: viewDecision, agents: viewAgents, infra: viewInfra, rl: viewRL };
+const VIEW_FN = { overview: viewOverview, rules: viewRules, review: viewReview, run: viewRun, evidence: viewEvidence, decision: viewDecision, agents: viewAgents, infra: viewInfra, rl: viewRL };
 
 function renderTop() {
   const r = S.run, sys = S.system;
@@ -809,20 +834,23 @@ function renderTop() {
   $('#runs').innerHTML = S.runs.map((x) => `<button class="run-item" data-act="open" data-id="${esc(x.id)}" aria-current="${x.id === r?.id}"><span class="t">${esc(x.title)}</span><small>${esc(STATUS_LABEL[x.id === r?.id ? r.status : x.status] || x.status)} · ${dt(x.created_at)} · ${esc(x.id)}</small></button>`).join('') || '<p class="muted" style="padding:.4rem">No runs yet.</p>';
   const st = r ? stage(r.status) : -1, open = gateOpen(r);
   const done = { rules: !!r, review: st > stage('awaiting_approval'), run: st >= stage('awaiting_decision'), evidence: !!r?.decision, decision: !!r?.decision };
-  const btn = ([v, label], i) => `<button data-act="nav" data-v="${v}" class="${done[v] ? 'done' : ''}" ${S.active === v ? 'aria-current="true"' : ''}><span class="n">${done[v] ? '✓' : i + 1}</span>${label}${done[v] ? '<span class="sr"> (done)</span>' : ''}</button>`;
-  const html = STEPS.slice(0, 2).map(btn).join('')
+  const cur = (v) => (S.page === v ? 'aria-current="page"' : '');
+  const btn = ([v, label], i) => { const wait = !reached(v) && !done[v];
+    return `<button data-act="nav" data-v="${v}" class="${done[v] ? 'done' : ''} ${wait ? 'waiting' : ''}" ${cur(v)}><span class="n">${done[v] ? '✓' : wait ? LOCK(false, 11) : i + 1}</span>${label}<span class="sr">${done[v] ? ' (done)' : wait ? ' (waiting)' : ''}</span></button>`; };
+  const html = `<button data-act="nav" data-v="overview" class="ov" ${cur('overview')}><span class="n">◎</span>Overview</button>` + STEPS.slice(0, 2).map(btn).join('')
     + `<span class="lockline ${open ? 'open' : ''}" role="img" aria-label="Human gate ${open ? 'open' : 'locked'}" title="Human gate ${open ? 'open' : 'locked'}">${LOCK(open)}</span>`
     + STEPS.slice(2).map((x, i) => btn(x, i + 2)).join('') + '<span class="sep" aria-hidden="true"></span>'
-    + TABS.map(([v, label]) => `<button class="tab" data-act="nav" data-v="${v}" ${S.active === v ? 'aria-current="true"' : ''}>${label}</button>`).join('') + telemetry;
+    + TABS.map(([v, label]) => `<button class="tab ${reached(v) ? '' : 'waiting'}" data-act="nav" data-v="${v}" ${cur(v)}>${label}</button>`).join('') + telemetry;
   const rail = $('#rail'); if (rail._h !== html) { rail.innerHTML = html; rail._h = html; }
 }
 
 const reached = (id) => { const r = S.run, st = r ? stage(r.status) : -1;
-  return { rules: true, review: !!r, run: st >= stage('running'), evidence: st >= stage('running'), decision: st >= stage('awaiting_decision'), agents: !!r, infra: true, rl: !!r }[id]; };
+  return { overview: true, rules: true, review: !!r, run: st >= stage('running'), evidence: st >= stage('running'), decision: st >= stage('awaiting_decision'), agents: !!r, infra: true, rl: !!r }[id]; };
 
 function secKey(id) {
   const r = S.run, busy = [S.busy, S.me?.can_act], fl = S.flashUntil > Date.now();
   switch (id) {
+    case 'overview': return [r?.id, r?.status, r?.title, r?.counts, r?.proofs?.length, r?.sandboxes_used, r?.triage, r?.github, r?.cases?.map((c) => c.status), r?.decision];
     case 'rules': return [r?.id, r?.created_at, ...busy];
     case 'review': return [r?.id, r?.status, r?.cases, r?.plan, r?.replay, S.editing, ...busy, r && !casesOf(r).length ? S.events.length : 0];
     case 'run': return [r?.id, r?.status, r?.counts, r?.proofs, r?.replay, S.events.length, S.agents, S.findingSeen, fl, S.system?.sandbox_host?.mode];
@@ -888,7 +916,7 @@ function syncScene() {
   const count = (pool) => { const n = ps.filter((p) => poolOf(p) === pool).length; return n ? ` · ${n} Job${n > 1 ? 's' : ''}${r.status === 'running' ? '' : ', destroyed ✓'}` : ''; };
   scene.setPools({ agent: `agent-written tests${count('agent')}`, data: `replay data, no agent code${count('data')}` });
   let towers = null, callout = '', screen = 'ISO 8583';
-  const x = S.replayOn && S.results?.find((y) => y.case.id === S.sel);
+  const x = S.replayOn && S.page === 'evidence' && S.results?.find((y) => y.case.id === S.sel); // replay drives the towers only on Evidence
   if (x && x.result.steps.length) {
     const res = x.result, n = res.steps.length, i = Math.min(S.replayStep, n - 1), st = res.steps[i], cs = x.case.steps[i] || {};
     towers = towersFor(st.old_a_code, st.old_b_code, st.new_code, st.expected_code);
@@ -904,9 +932,23 @@ function syncScene() {
     flowing: ['running', 'triaging'].includes(r?.status), towers, callout, screen }); // replays use pulse() bursts
 }
 
+function nextAction() {
+  const r = S.run; if (!r) return [['rules', 'Write the rules →']];
+  const prop = casesOf(r).filter((c) => c.status === 'proposed').length;
+  switch (r.status) {
+    case 'draft': case 'planning': return [['review', 'Watch Vultr AI write the tests →']];
+    case 'awaiting_approval': return [['review', prop ? `Review ${num(prop)} test${prop > 1 ? 's' : ''} →` : 'Run the approved tests →']];
+    case 'running': case 'triaging': return [['run', 'Watch the sandboxes →']];
+    case 'awaiting_decision': return [['evidence', 'Open evidence →'], ['decision', 'Make the decision →']];
+  }
+  return [['decision', 'See the decision →'], ['evidence', 'Open evidence →']];
+}
+
 function renderHero() {
   const [main, sub, tone] = heroStatus(), st = $('#hero-status');
   if (st.textContent !== main) st.textContent = main;
+  const cta = nextAction().map(([v, t], i) => `<button class="btn ${i ? '' : 'primary'}" data-act="nav" data-v="${v}">${esc(t)}</button>`).join('');
+  const ce = $('#hero-cta'); if (ce._h !== cta) { ce.innerHTML = cta; ce._h = cta; }
   $('#hero-sub').textContent = sub; $('#hero').dataset.tone = tone;
   if (scene) return syncScene();
   const fb = $('#hero-fallback'), html = heroInner('run');
@@ -915,24 +957,49 @@ function renderHero() {
 
 function render(force = false) {
   renderTop(); renderHero();
-  for (const id of SECTIONS) renderSection(id, force);
+  renderSection(S.page, force);   // hidden pages render when they are opened
 }
 
-function scrollToSec(id) {
-  if (!id) return;
-  const el = id === 'hero' ? $('#hero') : $(`#sec-${id}`);
-  el?.scrollIntoView({ behavior: reduced() ? 'auto' : 'smooth', block: 'start' });
+const pageHash = (page) => `#${S.run ? encodeURIComponent(S.run.id) + '/' : ''}${toHash(page)}`;
+function parseHash() {
+  const [a, b] = decodeURIComponent(location.hash.slice(1)).split('/');
+  if (b) return { id: a, view: fromHash(b) };
+  return PAGES.includes(fromHash(a)) ? { id: null, view: fromHash(a) } : { id: a || null, view: null };
 }
-function setActive(id) {
-  if (!id || id === S.active) return;
-  S.active = id; renderTop();
-  history.replaceState(null, '', `${location.search}#${S.run ? encodeURIComponent(S.run.id) + '/' : ''}${id}`);
+// Navigate: push a history entry; the hashchange listener shows the page (so back/forward behave the same way).
+function go(page) {
+  if (!PAGES.includes(page)) return;
+  if (location.hash === pageHash(page)) return showPage(page);
+  location.hash = pageHash(page);
 }
+function placeHero(page) {
+  const hero = $('#hero'), mode = SCENE_PAGES[page], slot = mode ? $(`#sec-${page} .hero-slot`) : $('#hero-park');
+  if (hero.parentElement !== slot) slot.appendChild(hero);  // moving the canvas keeps its single WebGL context
+  hero.classList.toggle('compact', mode === 'compact');
+}
+function showPage(page, { replace = false } = {}) {
+  page = PAGES.includes(page) ? page : 'overview';
+  const changed = page !== S.page || replace;
+  S.page = page;
+  if (replace) history.replaceState(null, '', `${location.search}${pageHash(page)}`);
+  for (const p of PAGES) { const el = $(`#sec-${p}`); el.hidden = p !== page; }
+  placeHero(page);
+  const el = $(`#sec-${page}`);
+  el.classList.remove('enter'); void el.offsetWidth; el.classList.add('enter');
+  render(true);
+  if (page === 'evidence' && S.results) startReplay();
+  if (changed) { window.scrollTo(0, 0); el.querySelector('.sec-h')?.focus({ preventScroll: true }); }
+}
+window.addEventListener('hashchange', () => {
+  const { id, view } = parseHash();
+  if (id && id !== S.run?.id) return selectRun(id, view || 'overview');
+  showPage(view || 'overview');
+});
 
 // ---------- events ----------
 const ACTIONS = {
-  nav: (b) => { scrollToSec(b.dataset.v); if (b.dataset.v === 'evidence' && S.results) startReplay(); },
-  new: () => { clearInterval(replayTimer); Object.assign(S, { run: null, events: [], agents: [], results: null, triageResults: null, replayOn: false }); render(true); scrollToSec('rules'); },
+  nav: (b) => go(b.dataset.v),
+  new: () => { clearInterval(replayTimer); Object.assign(S, { run: null, events: [], agents: [], results: null, triageResults: null, replayOn: false, keys: {} }); go('rules'); },
   open: (b) => { $('#switcher').open = false; selectRun(b.dataset.id); },
   sel: (b) => { S.sel = b.dataset.id; render(true); startReplay(); },
   replay: () => startReplay(),
@@ -970,11 +1037,13 @@ const FORMS = {
   }),
   decision: (f, fd, sub) => act(async () => {
     S.run = await api('POST', `/api/runs/${S.run.id}/decision`, { decision: sub?.value || 'block', reviewer: fd.get('reviewer'), note: fd.get('note') || '' });
-    setTimeout(() => scrollToSec('hero'), 150); // watch the barrier come down
+    setTimeout(() => go('decision'), 150); // stamp + the BLOCKED barrier in the banner
     S.runs = await api('GET', '/api/runs');
   }),
 };
 document.addEventListener('click', (e) => {
+  // the skip link must not touch the hash (the hash is the router): move focus to the page heading instead
+  if (e.target.closest('.skip')) { e.preventDefault(); $(`#sec-${S.page} .sec-h`)?.focus(); return; }
   const sw = $('#switcher'); if (sw.open && !sw.contains(e.target)) sw.open = false;
   const b = e.target.closest('[data-act]'); if (b && !b.disabled) ACTIONS[b.dataset.act]?.(b);
 });
@@ -997,20 +1066,17 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('#switch
   if (banner) { $('#mode').textContent = banner; $('#mode').hidden = false; }
   try { if (MODE === 'mock') { await loadMock(); if (qs.get('viewer') === '1') FX.me = { auth: 'netbird', user: null, groups: [], role: 'viewer', can_act: false }; } } catch (e) { toast(`Could not load mock fixtures: ${e.message}`, 'err'); }
   // run from #<id>/<view> or ?run=<id> (links in GitHub issues use ?run=); read before the first render rewrites the hash
-  const [hashId, view0] = decodeURIComponent(location.hash.slice(1)).split('/');
+  const parsed = parseHash(), hashId = parsed.id;
   const id = hashId || qs.get('run') || '';
-  const view = view0 === 'safety' ? 'infra' : view0;
+  const view = parsed.view;
   const topH = () => document.documentElement.style.setProperty('--top-h', `${$('.top').offsetHeight}px`);
   topH(); new ResizeObserver(topH).observe($('.top'));
   await startScene();
-  const io = new IntersectionObserver((es) => es.forEach((e) => e.isIntersecting && setActive(e.target.dataset.sec)), { rootMargin: '-35% 0px -60% 0px' });
-  document.querySelectorAll('[data-sec]').forEach((el) => io.observe(el));
   await tick();
   // no run asked for: open the most recent one so visitors never land on an empty page
   const want = S.runs.find((x) => x.id === id) || ((MODE === 'snapshot' || !hashId) && S.runs[0]);
-  const target = VIEW_FN[view] || view === 'hero' ? view : VIEW_FN[id] ? id : undefined;
-  // first load lands on the 3D hero (the whole story at a glance) unless the link names a section
-  if (want) await selectRun(want.id, target || 'hero'); else { render(true); scrollToSec(target); }
+  // first load lands on the overview (the whole story at a glance) unless the link names a page
+  if (want) await selectRun(want.id, view || 'overview'); else showPage(view || 'overview', { replace: true });
   setInterval(tick, 1000);
 })();
 
@@ -1023,7 +1089,7 @@ async function startScene() {
   try {
     const mod = await import('./scene3d.js');
     if (!mod.webglAvailable()) return fallback('no WebGL');
-    scene = mod.createScene($('#scene'), { onTowerClick: () => scrollToSec('evidence'), onError: fallback });
+    scene = mod.createScene($('#scene'), { onTowerClick: () => go('evidence'), onError: fallback });
     $('#hero-fallback').hidden = true;
   } catch (e) { fallback(e); }
 }

@@ -32,28 +32,37 @@ spec:
           args:
             - |
               set -eu
-              apk add --no-cache util-linux coreutils >/dev/null
+              apk add --no-cache util-linux coreutils bzip2 tar >/dev/null
               ARCH=$(uname -m)
-              URL=https://storage.googleapis.com/gvisor/releases/release/latest/$ARCH
-              if [ ! -x /host/usr/local/bin/runsc ] || [ ! -x /host/usr/local/bin/containerd-shim-runsc-v1 ]; then
+              # pinned release; gVisor now ships one archive (runsc + shim + gvisor-bin/ helpers), no "latest" alias
+              REL=20260921
+              URL=https://storage.googleapis.com/gvisor/releases/release/$REL/$ARCH
+              if [ ! -x /host/usr/local/bin/runsc ] || [ ! -d /host/usr/local/bin/gvisor-bin ]; then
                 cd /tmp
-                for f in runsc containerd-shim-runsc-v1; do wget -q "$URL/$f" "$URL/$f.sha512"; done
-                sha512sum -c runsc.sha512 containerd-shim-runsc-v1.sha512
-                install -m 755 runsc containerd-shim-runsc-v1 /host/usr/local/bin/
-                echo "installed gVisor $(/host/usr/local/bin/runsc --version | head -1)"
+                wget -q "$URL/gvisor.tar.bz2" "$URL/gvisor.tar.bz2.sha512"
+                sha512sum -c gvisor.tar.bz2.sha512
+                tar -xjf gvisor.tar.bz2 -C /host/usr/local/bin
+                echo "installed gVisor $REL: $(nsenter -t 1 -m -- /usr/local/bin/runsc --version | head -1)"
               fi
-              CFG=/host/etc/containerd/config.toml
+              # use the config the RUNNING containerd was started with (VKE: /opt/containerd/config.toml)
+              HOSTCFG=$(nsenter -t 1 -m -p -- sh -c 'pgrep -a -x containerd' | sed -n 's/.*--config[ =]\([^ ]*\).*/\1/p' | head -1)
+              HOSTCFG=${HOSTCFG:-/etc/containerd/config.toml}
+              CFG=/host$HOSTCFG
+              echo "containerd config: $HOSTCFG"
               if [ ! -s "$CFG" ]; then
-                mkdir -p /host/etc/containerd
+                mkdir -p "$(dirname "$CFG")"
                 nsenter -t 1 -m -- containerd config default > "$CFG"
               fi
-              if ! grep -q 'runtimes.runsc' "$CFG"; then
-                if grep -q '^version *= *3' "$CFG"; then
-                  printf '\n[plugins."io.containerd.cri.v1.runtime".containerd.runtimes.runsc]\n  runtime_type = "io.containerd.runsc.v1"\n' >> "$CFG"
-                else
-                  printf '\n[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc]\n  runtime_type = "io.containerd.runsc.v1"\n' >> "$CFG"
-                fi
-                echo "registered runsc in containerd, restarting containerd"
+              # containerd config v3+ (containerd 2.x; VKE ships v4) names the CRI runtime plugin differently than v2
+              if grep -Eq '^version *= *([3-9]|[1-9][0-9])' "$CFG"; then
+                KEY="io.containerd.cri.v1.runtime"
+              else
+                KEY="io.containerd.grpc.v1.cri"
+              fi
+              if ! grep -q "$KEY.*containerd.runtimes.runsc" "$CFG"; then
+                sed -i '/containerd\.runtimes\.runsc\]/,+1d' "$CFG"      # drop a runsc block written under the wrong key
+                printf '\n[plugins."%s".containerd.runtimes.runsc]\n  runtime_type = "io.containerd.runsc.v1"\n' "$KEY" >> "$CFG"
+                echo "registered runsc under $KEY, restarting containerd"
                 nsenter -t 1 -m -u -i -n -p -- systemctl restart containerd
               fi
               touch /tmp/ready
