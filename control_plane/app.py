@@ -16,9 +16,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from control_plane import db, llm, sandbox_client
-from control_plane.agents import coordinator
+from control_plane import db, llm, objstore, sandbox_client
+from control_plane.agents import coordinator, reporter
 from control_plane.events import agent_statuses, emit, now, say, set_state
+from shared import vultr
 from shared.schemas import (Bounds, Decision, JobRequest, ReplayConfig, RLReport, Run, Step, TestCase)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -285,15 +286,15 @@ async def retry(run_id: str):
 
 @app.get("/api/runs/{run_id}/export")
 def export(run_id: str):
-    run = get(run_id)
-    res = [x for v in ("regression", "both_wrong", "error", "noise") for x in db.results(run_id, v, 5000)]
-    res += db.results(run_id, "pass", 50)
-    return {"run": run, "results": res, "events": db.events(run_id), "agents": agent_statuses(run_id)}
+    get(run_id)
+    return reporter.export_bundle(run_id)
 
 
 @app.get("/api/system")
 async def system():
-    return {"control_plane": {"hostname": socket.gethostname(), "uname": " ".join(x for x in platform.uname() if x)},
+    return {"control_plane": {"hostname": socket.gethostname(), "uname": " ".join(x for x in platform.uname() if x),
+                              "vultr": vultr.metadata(), "storage": vultr.storage(os.path.dirname(db.DB_PATH))},
+            "object_storage": objstore.info(),
             "sandbox_host": await sandbox_client.health(),
             "llm": {"base_url": llm.base_url(), "model": llm.model_for("coordinator"), "offline": llm.offline(),
                     "reachable": bool(llm.reachable), "models": llm.available_models[:30]}}

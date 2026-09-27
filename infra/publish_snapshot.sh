@@ -1,9 +1,18 @@
 #!/usr/bin/env bash
-# Publish a read-only recording of a run to GitHub Pages (gh-pages branch).
+# Publish a read-only recording of a run as the public demo URL.
+#  - Vultr Object Storage (default when VULTR_S3_* is set in /etc/switchproof.env): run on sp-control
+#  - otherwise GitHub Pages (gh-pages branch)
 # Usage: bash infra/publish_snapshot.sh <run_id> [http://127.0.0.1:8000]
-# Result: https://<owner>.github.io/<repo>/?snapshot=export.json
 set -euo pipefail
 RUN_ID="${1:?usage: publish_snapshot.sh <run_id> [base_url]}"
+if [ -r /etc/switchproof.env ]; then set -a; . /etc/switchproof.env; set +a; fi
+if [ -n "${VULTR_S3_BUCKET:-}" ] && [ -n "${VULTR_S3_ACCESS_KEY:-}" ]; then
+  cd "$(dirname "$0")/.."
+  echo "==> publishing $RUN_ID to Vultr Object Storage bucket $VULTR_S3_BUCKET"
+  URL="$(${PYTHON:-.venv/bin/python} -m control_plane.objstore publish "$RUN_ID")"
+  echo "==> public demo URL: $URL"
+  exit 0
+fi
 BASE="${2:-${BASE_URL:-http://127.0.0.1:8000}}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REMOTE="${REMOTE:-$(git -C "$ROOT" remote get-url origin)}"

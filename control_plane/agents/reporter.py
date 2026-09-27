@@ -2,10 +2,13 @@
 from __future__ import annotations
 import os
 
+import asyncio
+import json
+
 import httpx
 
-from control_plane import db
-from control_plane.events import emit
+from control_plane import db, objstore
+from control_plane.events import agent_statuses, emit
 from shared.schemas import Run
 
 CONTEXT = "switchproof/migration-gate"
@@ -24,6 +27,28 @@ async def _post(path: str, body: dict) -> dict:
     if r.status_code >= 300:
         raise RuntimeError(f"GitHub {path} -> {r.status_code}: {r.text[:300]}")
     return r.json()
+
+
+def export_bundle(run_id: str) -> dict:
+    """Run + every non-pass result + 50 sample passes + all events: the evidence bundle / snapshot."""
+    res = [x for v in ("regression", "both_wrong", "error", "noise") for x in db.results(run_id, v, 5000)]
+    res += db.results(run_id, "pass", 50)
+    return {"run": db.get_run(run_id), "results": res, "events": db.events(run_id), "agents": agent_statuses(run_id)}
+
+
+async def archive_evidence(run_id: str, loop_iter: int | None = None) -> str | None:
+    """Immutable-ish audit copy on Vultr Object Storage (overwritten per stage: report, then decision)."""
+    if not objstore.configured():
+        return None
+    try:
+        body = json.dumps(export_bundle(run_id), default=lambda o: o.model_dump()).encode()
+        url = await asyncio.to_thread(objstore.put, f"runs/{run_id}/evidence.json", body)
+        emit(run_id, "reporter", "info", f"Evidence bundle archived to Vultr Object Storage ({len(body) / 1024:,.0f} KB)",
+             {"url": url}, loop_iter=loop_iter)
+        return url
+    except Exception as e:
+        emit(run_id, "reporter", "warning", f"Vultr Object Storage upload failed: {str(e)[:300]}", loop_iter=loop_iter)
+        return None
 
 
 def _run_link(run: Run) -> str:
@@ -47,8 +72,9 @@ def issue_body(run: Run) -> str:
              f"read-only root `{p.readonly_rootfs}`") if p else "n/a"
     return (f"{t.summary_md if t else ''}\n\n**Root cause hypothesis:** {t.root_cause_hypothesis if t else 'n/a'}\n\n"
             f"### Failing steps\n{rows}\n\n{hexes}\n\n### Sandbox proof\n{proof}\n\n"
-            f"Counts: {run.counts.model_dump()}\n\n[Open run in SwitchProof]({_run_link(run)})\n\n"
-            "_Data: IBM TabFormer public synthetic benchmark; the defect is seeded for the demo._")
+            f"Counts: {run.counts.model_dump()}\n\n[Open run in SwitchProof]({_run_link(run)})"
+            + (f" · [Evidence bundle on Vultr Object Storage]({run.github['evidence_url']})" if run.github.get("evidence_url") else "")
+            + "\n\n_Data: IBM TabFormer public synthetic benchmark; the defect is seeded for the demo._")
 
 
 async def set_status(run: Run, state: str, description: str) -> None:
@@ -60,6 +86,9 @@ async def set_status(run: Run, state: str, description: str) -> None:
 
 async def file_report(run: Run, loop_iter: int | None = None) -> dict:
     github = dict(run.github)
+    if url := await archive_evidence(run.id, loop_iter):
+        github["evidence_url"] = url
+        run = run.model_copy(update={"github": github})
     n_reg = run.counts.regression
     sev = run.triage.severity.upper() if run.triage else "INFO"
     gh = _gh()
@@ -113,4 +142,7 @@ async def publish_decision(run: Run, loop_iter: int | None = None) -> dict:
             emit(run.id, "reporter", "warning", f"GitHub update failed: {str(e)[:300]}", loop_iter=loop_iter)
     else:
         emit(run.id, "reporter", "info", f"Release gate -> {state} (local; GitHub not configured): {desc}", loop_iter=loop_iter)
+    db.mutate_run(run.id, lambda r: setattr(r, "github", github))       # bundle must contain the final gate state
+    if url := await archive_evidence(run.id, loop_iter):
+        github["evidence_url"] = url
     return github

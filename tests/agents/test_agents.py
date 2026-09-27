@@ -110,3 +110,24 @@ def test_rl_experiment_smoke():
     out = main({"train_episodes": 20, "eval_seeds": 3, "budget": 20})
     assert len(out["curves"]["learned"]) == 20 and "dup_window_units" not in out["trained_on_bugs"]
     assert set(out["first_find"]) >= {"learned", "random"}
+
+
+def test_evidence_archived_to_vultr_object_storage(monkeypatch):
+    import httpx
+    from control_plane import objstore
+    for k, v in {"VULTR_S3_ENDPOINT": "https://ewr1.vultrobjects.com", "VULTR_S3_ACCESS_KEY": "AK",
+                 "VULTR_S3_SECRET_KEY": "SK", "VULTR_S3_BUCKET": "switchproof"}.items():
+        monkeypatch.setenv(k, v)
+    puts = []
+
+    def fake_request(method, url, headers=None, content=b"", timeout=None):
+        puts.append((method, url, headers))
+        return httpx.Response(200)
+    monkeypatch.setattr(objstore.httpx, "request", fake_request)
+    run = demo_main(replay=0)
+    assert run["github"]["evidence_url"] == f"https://ewr1.vultrobjects.com/switchproof/runs/{run['id']}/evidence.json"
+    assert len(puts) == 2 and all(h["x-amz-acl"] == "public-read" and h["authorization"].startswith("AWS4-HMAC-SHA256") for _, _, h in puts)
+    url = objstore.publish_site({"run": {}}, prefix="site-test")
+    assert url.endswith("/switchproof/site-test/index.html?snapshot=export.json")
+    assert any(u.endswith("/site-test/app.js") and h["content-type"].startswith("text/javascript") for _, u, h in puts)
+    assert not any("/mock/" in u for _, u, _ in puts)
