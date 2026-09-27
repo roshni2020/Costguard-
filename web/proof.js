@@ -1,7 +1,6 @@
 // Live proof panel: real, checkable values from the Vultr deployment (VM identity, Kubernetes pods right now,
 // the last Vultr inference call, the data source). Separate from app.js on purpose; it only reads the API.
 const qs = new URLSearchParams(location.search);
-if (!qs.has('mock') && !qs.has('snapshot')) boot();
 
 function h(tag, props = {}, ...kids) {
   const el = document.createElement(tag);
@@ -113,3 +112,6 @@ function render(body, sys, live, run, evs, showPrompt, togglePrompt) {
 }
 
 function row(k, v) { return h('div', { class: 'row' }, h('span', { text: k }), v instanceof Node ? v : h('span', { text: v })); }
+
+// started last: boot() uses the const helpers above, which don't exist until their line has run
+if (!qs.has('mock') && !qs.has('snapshot')) boot();
