@@ -72,7 +72,7 @@ async def chat(run_id: str, agent: str, messages: list[dict], tools: list[dict] 
         body["tools"] = tools
         body["tool_choice"] = "auto"
     t0 = time.perf_counter()
-    async with httpx.AsyncClient(timeout=60) as c:
+    async with httpx.AsyncClient(timeout=float(os.environ.get("LLM_TIMEOUT", "180"))) as c:   # reasoning models can think a while
         r = await c.post(base_url() + "/chat/completions", headers=_headers(), json=body)
     latency = int((time.perf_counter() - t0) * 1000)
     if r.status_code != 200:
