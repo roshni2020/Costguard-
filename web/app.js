@@ -1,4 +1,4 @@
-// SwitchProof UI ("mission control"): vanilla ES module, no build step.
+// SwitchProof UI ("mission control", one scrolling page + three.js hero): vanilla ES module, no build step.
 // Modes: live (default), ?mock=1, ?snapshot=<export.json url>. Optional ?theme=dark|light.
 const qs = new URLSearchParams(location.search);
 const MODE = qs.has('snapshot') ? 'snapshot' : qs.get('mock') === '1' ? 'mock' : 'live';
@@ -27,11 +27,14 @@ const STATUS_VIEW = { draft: 'review', planning: 'review', awaiting_approval: 'r
 const STATUS_LABEL = { draft: 'Draft', planning: 'Agents planning', awaiting_approval: 'Awaiting your approval', running: 'Running in sandboxes',
   triaging: 'Triage investigating', awaiting_decision: 'Awaiting decision', blocked: 'Migration blocked', approved_for_release: 'Release approved' };
 const ORDER = Object.keys(STATUS_VIEW);
+const SECTIONS = ['rules', 'review', 'run', 'evidence', 'decision', 'agents', 'infra', 'rl'];
+// Where to scroll when a run reaches a status (null: stay put).
+const STATUS_SEC = { draft: 'review', planning: 'review', awaiting_approval: 'review', running: 'hero', triaging: null, awaiting_decision: 'evidence', blocked: 'hero', approved_for_release: 'hero' };
 const CONV_KINDS = ['message', 'tool_call', 'tool_result', 'llm_call', 'decision'];
 
 const S = { runs: [], run: null, events: [], agents: [], system: null, probe: null, results: null, triageResults: null,
   view: 'rules', verdict: 'regression', sel: null, editing: null, convAgent: '', showLLM: true, findingSeen: false, flashUntil: 0,
-  busy: false, probing: false, loadingResults: false, dirty: false, lastKey: '', replayStep: 0, seen: new Set(), me: null, share: undefined, shareWas: false };
+  busy: false, probing: false, loadingResults: false, dirty: false, lastKey: '', replayStep: 0, seen: new Set(), me: null, share: undefined, shareWas: false, active: 'hero', keys: {}, dirtySec: new Set(), replayOn: false };
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 // ---------- helpers ----------
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -257,11 +260,13 @@ async function selectRun(id, view) {
   try {
     const [run, evs] = await Promise.all([api('GET', `/api/runs/${id}`), api('GET', `/api/runs/${id}/events?after=0`)]);
     clearInterval(replayTimer);
-    Object.assign(S, { run, events: [], results: null, triageResults: null, sel: null, editing: null, probe: null, replayStep: 0, seen: new Set(), share: undefined });
+    Object.assign(S, { run, events: [], results: null, triageResults: null, sel: null, editing: null, probe: null, replayStep: 0, seen: new Set(), share: undefined, replayOn: false });
     addEvents(evs);
     S.findingSeen = S.events.some((e) => e.kind === 'finding'); S.flashUntil = 0;
-    S.view = view || STATUS_VIEW[run.status];
     S.agents = await api('GET', `/api/runs/${id}/agents`).catch(() => deriveAgents(S.events, run.status));
+    render(true);
+    scrollToSec(view || STATUS_SEC[run.status]);
+    return;
   } catch (e) { toast(`Could not open run: ${e.message}`, 'err'); }
   render(true);
 }
@@ -272,7 +277,7 @@ async function refreshRun() {
   if (S.run?.id !== id) return;
   S.run = run; addEvents(evs);
   S.agents = await api('GET', `/api/runs/${id}/agents`).catch(() => deriveAgents(S.events, run.status));
-  if (run.status !== prev) { S.results = S.triageResults = null; if (STEPS.some(([v]) => v === S.view)) S.view = STATUS_VIEW[run.status]; }
+  if (run.status !== prev) { S.results = S.triageResults = null; if (STATUS_SEC[run.status]) setTimeout(() => scrollToSec(STATUS_SEC[run.status]), 120); }
 }
 
 async function loadResults() {
@@ -289,7 +294,7 @@ async function loadResults() {
   } catch (e) { toast(`Could not load results: ${e.message}`, 'err'); S.results = []; S.triageResults ||= []; }
   S.loadingResults = false;
   render();
-  if (S.view === 'evidence') startReplay();
+  startReplay();
 }
 
 let ticks = 0;
@@ -382,9 +387,9 @@ function heroSvg({ codes = null, expected = null, callout = '', label = '', pack
     ${callout ? `<g class="callout"><rect x="526" y="242" width="214" height="26" rx="7"/><text x="633" y="260" text-anchor="middle" font-size="13">${esc(callout)}</text></g>` : ''}</svg>`;
 }
 
-function heroInner() {
+function heroInner(mode = 'run') {
   const r = S.run;
-  if (S.view === 'evidence') {
+  if (mode === 'evidence') {
     const x = S.results?.find((y) => y.case.id === S.sel);
     if (!x) return heroSvg({ packets: false });
     const res = x.result, c = x.case, n = res.steps.length, i = Math.min(S.replayStep, n - 1), s = res.steps[i];
@@ -397,6 +402,7 @@ function heroInner() {
         ${res.steps.map((_, j) => `<button class="btn small" data-act="replay-step" data-i="${j}" aria-pressed="${j === i}" aria-label="Show step ${j + 1}">${j + 1}</button>`).join('')}
         <button class="btn small" data-act="replay">Replay ▶</button></div>`;
   }
+  if (!r) return heroSvg({ packets: false });
   const f = S.events.find((e) => e.kind === 'finding' && e.data?.new_code);
   const active = ['running', 'triaging'].includes(r.status);
   if (f) {
@@ -408,8 +414,8 @@ function heroInner() {
   return heroSvg({ packets: active, label: active ? 'sending approved tests to all three switches' : '' })
     + `<div class="cap">${active ? '<span class="spin"></span> Each ISO 8583 message goes to both legacy copies and the new switch.' : 'No regression found.'}</div>`;
 }
-const heroBlock = () => `<section class="panel hero" id="hero" aria-label="Switch diagram">${heroInner()}</section>`;
-const drawHero = () => { const el = $('#hero'); if (el) el.innerHTML = heroInner(); };
+const heroBlock = () => `<section class="panel hero" id="ev-hero" aria-label="Case replay">${heroInner('evidence')}</section>`;
+const drawHero = () => { const el = $('#ev-hero'); if (el) el.innerHTML = heroInner('evidence'); S.replayOn = true; syncScene(); };
 
 let replayTimer = null;
 function startReplay() {
@@ -418,7 +424,7 @@ function startReplay() {
   const n = x.result.steps.length;
   if (reduced()) { const m = x.result.steps.findIndex((s) => s.new_code !== s.expected_code || s.old_a_code !== s.expected_code); S.replayStep = m < 0 ? n - 1 : m; drawHero(); return; }
   S.replayStep = 0; drawHero();
-  replayTimer = setInterval(() => { if (S.replayStep >= n - 1 || S.view !== 'evidence') { clearInterval(replayTimer); return; } S.replayStep++; drawHero(); }, 1400);
+  replayTimer = setInterval(() => { if (S.replayStep >= n - 1) { clearInterval(replayTimer); return; } S.replayStep++; drawHero(); }, 1400);
 }
 
 // ---------- views ----------
@@ -522,7 +528,7 @@ function viewRun() {
   const lane = (pool, title, sub) => { const ps = r.proofs.filter((p) => poolOf(p) === pool);
     return `<div class="lane lane-${pool}"><h4>${title} <span class="muted">· ${sub}</span></h4><div class="tiles">${ps.map(tile).join('') || `<p class="muted">${pool === 'data' && !r.replay.enabled ? 'Replay is off for this run.' : 'Scheduling…'}</p>`}</div></div>`; };
   const counter = (n, label, cls = '') => `<div class="counter ${cls}"><div class="big">${num(n)}</div><small>${label}</small></div>`;
-  return `${findingBanner()}${heroBlock()}
+  return `${findingBanner()}
     <div class="counters">${counter(c.total, 'tests executed')}${counter(c.passed, '✓ passed', 'good')}${counter(c.regression, '✗ regressions · new differs from old', c.regression ? 'bad' : '')}${counter(c.error, `errors · ${num(c.noise)} noise · ${num(c.both_wrong)} both wrong`)}</div>
     <div class="progress" role="progressbar" aria-valuenow="${Math.round(pct)}" aria-valuemin="0" aria-valuemax="100" aria-label="Run progress"><div style="width:${pct}%"></div></div>
     <p class="progress-lbl">${r.status === 'running' ? `Running ${num(c.total)} of about ${num(planned)} ${k8s() ? 'as throwaway gVisor Jobs on Vultr Kubernetes Engine' : 'in throwaway sandboxes'}` : r.status === 'triaging' ? 'Triage agent is running follow-ups inside your bounds' : 'Run complete'} · ${num(r.sandboxes_used)} sandboxes used</p>
@@ -798,39 +804,135 @@ function renderTop() {
   const lstate = llm.offline ? ['', 'offline'] : llm.reachable === true ? ['ok', 'reachable'] : llm.reachable === false ? ['bad', 'unreachable'] : null;
   $('#model').innerHTML = sys && !sys.error ? `<span class="chip-model">Vultr · <b>${esc(llm.model || '—')}</b>${lstate ? ` <i class="dot ${lstate[0]}" title="${lstate[1]}"></i><span class="sr">${lstate[1]}</span>` : ''}</span>` : '';
   const llmEv = S.events.filter((e) => e.kind === 'llm_call');
-  const telemetry = `<div class="telemetry" aria-label="Run telemetry"><div><b>${S.agents.length || AGENTS.length}</b> agents</div><div><b>${num(llmEv.length)}</b> inference calls</div><div><b>${num(llmEv.reduce((s, e) => s + (e.tokens_in || 0) + (e.tokens_out || 0), 0))}</b> tokens</div></div>`;
+  const telemetry = `<span class="telemetry" aria-label="Run telemetry"><b>${S.agents.length || AGENTS.length}</b> agents · <b>${num(llmEv.length)}</b> inference calls · <b>${num(llmEv.reduce((s, e) => s + (e.tokens_in || 0) + (e.tokens_out || 0), 0))}</b> tokens</span>`;
   $('#sw-sum').textContent = r ? `${r.title} · ${STATUS_LABEL[r.status] || r.status}` : `Runs (${S.runs.length})`;
   $('#runs').innerHTML = S.runs.map((x) => `<button class="run-item" data-act="open" data-id="${esc(x.id)}" aria-current="${x.id === r?.id}"><span class="t">${esc(x.title)}</span><small>${esc(STATUS_LABEL[x.id === r?.id ? r.status : x.status] || x.status)} · ${dt(x.created_at)} · ${esc(x.id)}</small></button>`).join('') || '<p class="muted" style="padding:.4rem">No runs yet.</p>';
   const st = r ? stage(r.status) : -1, open = gateOpen(r);
   const done = { rules: !!r, review: st > stage('awaiting_approval'), run: st >= stage('awaiting_decision'), evidence: !!r?.decision, decision: !!r?.decision };
-  const btn = ([v, label], i) => `<button data-act="nav" data-v="${v}" class="${done[v] ? 'done' : ''}" ${S.view === v ? 'aria-current="page"' : ''}><span class="n">${done[v] ? '✓' : i + 1}</span>${label}${done[v] ? '<span class="sr"> (done)</span>' : ''}</button>`;
-  $('#rail').innerHTML = STEPS.slice(0, 2).map(btn).join('')
-    + `<div class="lockline ${open ? 'open' : ''}" role="img" aria-label="Human gate ${open ? 'open' : 'locked'}">${LOCK(open)}<span>${open ? 'gate open' : 'gate locked'}</span></div>`
-    + STEPS.slice(2).map((s, i) => btn(s, i + 2)).join('') + '<hr>'
-    + TABS.map(([v, label]) => `<button class="tab" data-act="nav" data-v="${v}" ${S.view === v ? 'aria-current="page"' : ''}><span class="n">${label[0]}</span>${label}</button>`).join('') + telemetry;
+  const btn = ([v, label], i) => `<button data-act="nav" data-v="${v}" class="${done[v] ? 'done' : ''}" ${S.active === v ? 'aria-current="true"' : ''}><span class="n">${done[v] ? '✓' : i + 1}</span>${label}${done[v] ? '<span class="sr"> (done)</span>' : ''}</button>`;
+  const html = STEPS.slice(0, 2).map(btn).join('')
+    + `<span class="lockline ${open ? 'open' : ''}" role="img" aria-label="Human gate ${open ? 'open' : 'locked'}" title="Human gate ${open ? 'open' : 'locked'}">${LOCK(open)}</span>`
+    + STEPS.slice(2).map((x, i) => btn(x, i + 2)).join('') + '<span class="sep" aria-hidden="true"></span>'
+    + TABS.map(([v, label]) => `<button class="tab" data-act="nav" data-v="${v}" ${S.active === v ? 'aria-current="true"' : ''}>${label}</button>`).join('') + telemetry;
+  const rail = $('#rail'); if (rail._h !== html) { rail.innerHTML = html; rail._h = html; }
+}
+
+const reached = (id) => { const r = S.run, st = r ? stage(r.status) : -1;
+  return { rules: true, review: !!r, run: st >= stage('running'), evidence: st >= stage('running'), decision: st >= stage('awaiting_decision'), agents: !!r, infra: true, rl: !!r }[id]; };
+
+function secKey(id) {
+  const r = S.run, busy = [S.busy, S.me?.can_act], fl = S.flashUntil > Date.now();
+  switch (id) {
+    case 'rules': return [r?.id, r?.created_at, ...busy];
+    case 'review': return [r?.id, r?.status, r?.cases, r?.plan, r?.replay, S.editing, ...busy, r && !casesOf(r).length ? S.events.length : 0];
+    case 'run': return [r?.id, r?.status, r?.counts, r?.proofs, r?.replay, S.events.length, S.agents, S.findingSeen, fl, S.system?.sandbox_host?.mode];
+    case 'evidence': return [r?.id, r?.status, r?.triage, r?.github, r?.proofs?.length, S.results ? S.results.length : -1, S.triageResults?.length, S.verdict, S.sel, S.findingSeen, fl, S.system?.sandbox_host?.mode];
+    case 'decision': return [r?.id, r?.status, r?.decision, r?.github, r?.counts, r?.triage, r?.sandboxes_used, S.share, S.shareWas, ...busy];
+    case 'agents': return [r?.id, S.events.length, S.agents, S.convAgent, S.showLLM];
+    case 'infra': return [S.system, S.probe, S.probing, r?.proofs?.length, r?.sandboxes_used, ...busy];
+    case 'rl': return [r?.id, r?.rl, ...busy];
+  }
+  return [];
+}
+
+function renderSection(id, force) {
+  const sec = document.getElementById(`sec-${id}`), el = sec?.querySelector('.sec-body'); if (!el) return;
+  const key = JSON.stringify(secKey(id));
+  const editing = el.contains(document.activeElement) && document.activeElement.matches('input,textarea,select');
+  // Polling never clobbers a form the user is editing; explicit actions (force) do.
+  if (!force && (key === S.keys[id] || S.dirtySec.has(id) || editing)) return;
+  S.keys[id] = key; S.dirtySec.delete(id);
+  sec.classList.toggle('waiting', !reached(id));
+  const open = [...el.querySelectorAll('details[open][data-k]')].map((d) => d.dataset.k);
+  const keep = Object.fromEntries([...el.querySelectorAll('[data-keep]')].map((x) => [x.dataset.keep, x.scrollTop]));
+  el.innerHTML = VIEW_FN[id]();
+  open.forEach((k) => el.querySelector(`details[data-k="${CSS.escape(k)}"]`)?.setAttribute('open', ''));
+  el.querySelectorAll('[data-keep]').forEach((x) => { if (keep[x.dataset.keep] != null) x.scrollTop = keep[x.dataset.keep]; });
+  el.querySelectorAll('[data-bottom]').forEach((x) => { x.scrollTop = x.scrollHeight; });
+  if (id === 'run') S.run?.proofs?.forEach((p) => S.seen.add(p.sandbox_id));
+}
+
+// ---------- hero: status line (the accessible equivalent of the 3D scene) + scene sync ----------
+function heroStatus() {
+  const r = S.run;
+  if (!r) return ['Waiting for rules', 'Describe what the new switch must do. Vultr AI writes the tests; you approve every one.', ''];
+  const c = r.counts, cases = casesOf(r), prop = cases.filter((x) => x.status === 'proposed').length;
+  const planned = cases.filter((x) => x.status === 'approved').length + (r.replay.enabled ? r.replay.sample_size : 0);
+  const dup = S.events.some((e) => e.kind === 'finding' && e.data?.old_code === '94' && e.data?.new_code === '00');
+  const reg = S.findingSeen || c.regression > 0, regText = dup ? 'New switch charged a customer twice' : 'New switch disagrees with the legacy switch';
+  switch (r.status) {
+    case 'draft': case 'planning': return ['Vultr AI is writing tests…', 'coordinator → planner → generator on Vultr Serverless Inference', ''];
+    case 'awaiting_approval': return prop ? [`${num(prop)} test${prop > 1 ? 's' : ''} await your approval`, 'Human gate locked: nothing runs until every test is decided', 'warn']
+      : ['Every test decided. The gate is open', 'Run the approved tests in gVisor sandboxes', 'good'];
+    case 'running': return reg ? [regText, `Running ${num(c.total)} / ${num(planned)} · ${num(c.regression)} regressions`, 'bad'] : [`Running ${num(c.total)} / ${num(planned)}`, 'Every message goes to OLD A, OLD B and NEW', ''];
+    case 'triaging': return [reg ? regText : 'Triage agent investigating', 'Triage agent is finding the boundary inside your bounds', reg ? 'bad' : ''];
+    case 'awaiting_decision': return reg ? [regText, `${num(c.regression)} regressions · your decision`, 'bad'] : ['No regressions found', 'Awaiting your decision', 'good'];
+    case 'blocked': return [`Migration blocked by ${r.decision?.reviewer || 'the reviewer'}`, `GitHub gate: ${r.github?.status_state || 'failure'}`, 'bad'];
+    case 'approved_for_release': return [`Release approved by ${r.decision?.reviewer || 'the reviewer'}`, `GitHub gate: ${r.github?.status_state || 'success'}`, 'good'];
+  }
+  return [STATUS_LABEL[r.status] || r.status, '', ''];
+}
+
+let scene = null, sceneRun, sceneIds = new Set(), lastPulse = '';
+const towersFor = (a, b, n, exp) => { const reg = n !== a && a === b, t = (cd, st) => ({ text: `${cd}\n${SHORT[cd] || CODES[cd] || ''}`, state: st });
+  return { old_a: t(a, a === exp ? 'ok' : 'idle'), old_b: t(b, b === exp ? 'ok' : 'idle'), new: t(n, reg ? 'bad' : n === exp ? 'ok' : 'idle') }; };
+function syncScene() {
+  if (!scene) return;
+  const r = S.run, ps = r?.proofs || [];
+  if ((r?.id || null) !== sceneRun) {       // new run: start clean, no burst of old pods
+    sceneRun = r?.id || null; scene.reset(); sceneIds = new Set(ps.map((p) => p.sandbox_id)); lastPulse = '';
+    if (r?.status === 'running' && ps.length) scene.addPod(ps.at(-1).sandbox_id, poolOf(ps.at(-1)));
+  }
+  for (const p of ps) if (!sceneIds.has(p.sandbox_id)) { sceneIds.add(p.sandbox_id); scene.addPod(p.sandbox_id, poolOf(p)); }
+  scene.setRunning(r?.status === 'running' ? ps.at(-1)?.sandbox_id ?? null : null);
+  const count = (pool) => { const n = ps.filter((p) => poolOf(p) === pool).length; return n ? ` · ${n} Job${n > 1 ? 's' : ''}${r.status === 'running' ? '' : ', destroyed ✓'}` : ''; };
+  scene.setPools({ agent: `agent-written tests${count('agent')}`, data: `replay data, no agent code${count('data')}` });
+  let towers = null, callout = '', screen = 'ISO 8583';
+  const x = S.replayOn && S.results?.find((y) => y.case.id === S.sel);
+  if (x && x.result.steps.length) {
+    const res = x.result, n = res.steps.length, i = Math.min(S.replayStep, n - 1), st = res.steps[i], cs = x.case.steps[i] || {};
+    towers = towersFor(st.old_a_code, st.old_b_code, st.new_code, st.expected_code);
+    if (i === n - 1) callout = calloutText(extraDebit(res.balance_delta_cents), res.steps.some((t) => t.old_a_code === '94' && t.new_code === '00'));
+    screen = `${cs.mti || ''} · STAN ${cs.stan || ''}`;
+    const pk = `${x.case.id}:${i}`; if (pk !== lastPulse) { lastPulse = pk; scene.pulse(); }
+  } else {
+    const f = S.events.find((e) => e.kind === 'finding' && e.data?.new_code);
+    if (f) { const d = f.data; towers = towersFor(d.old_code, d.old_code, d.new_code, d.old_code); callout = calloutText(extraDebit(d.balance_delta_cents), d.old_code === '94' && d.new_code === '00'); }
+  }
+  const stg = r ? stage(r.status) : -1;
+  scene.setState({ gate: stg >= stage('running') ? 'open' : gateOpen(r) ? 'ready' : 'closed', blocked: r?.decision?.decision === 'block',
+    flowing: ['running', 'triaging'].includes(r?.status), towers, callout, screen }); // replays use pulse() bursts
+}
+
+function renderHero() {
+  const [main, sub, tone] = heroStatus(), st = $('#hero-status');
+  if (st.textContent !== main) st.textContent = main;
+  $('#hero-sub').textContent = sub; $('#hero').dataset.tone = tone;
+  if (scene) return syncScene();
+  const fb = $('#hero-fallback'), html = heroInner('run');
+  if (fb._h !== html) { fb.innerHTML = html; fb._h = html; }
 }
 
 function render(force = false) {
-  renderTop();
-  const r = S.run, main = $('#main');
-  const key = JSON.stringify([S.view, r, S.events.length, S.agents, S.view === 'infra' ? S.system : 0, S.probe, S.probing, S.results?.length, S.triageResults?.length, S.verdict, S.sel, S.editing, S.convAgent, S.showLLM, S.busy, S.flashUntil > Date.now(), S.me, S.share]);
-  // Polling never clobbers a form the user is editing; explicit actions (force) do.
-  if (!force && (key === S.lastKey || S.dirty || (main.contains(document.activeElement) && document.activeElement.matches('input,textarea,select')))) return;
-  S.lastKey = key; S.dirty = false;
-  const open = [...main.querySelectorAll('details[open][data-k]')].map((d) => d.dataset.k);
-  const keep = Object.fromEntries([...main.querySelectorAll('[data-keep]')].map((el) => [el.dataset.keep, el.scrollTop]));
-  main.innerHTML = VIEW_FN[S.view]();
-  open.forEach((k) => main.querySelector(`details[data-k="${CSS.escape(k)}"]`)?.setAttribute('open', ''));
-  main.querySelectorAll('[data-keep]').forEach((el) => { if (keep[el.dataset.keep] != null) el.scrollTop = keep[el.dataset.keep]; });
-  main.querySelectorAll('[data-bottom]').forEach((el) => { el.scrollTop = el.scrollHeight; });
-  r?.proofs?.forEach((p) => S.seen.add(p.sandbox_id));
-  history.replaceState(null, '', `${location.search}#${r ? encodeURIComponent(r.id) + '/' : ''}${S.view}`);
+  renderTop(); renderHero();
+  for (const id of SECTIONS) renderSection(id, force);
+}
+
+function scrollToSec(id) {
+  if (!id) return;
+  const el = id === 'hero' ? $('#hero') : $(`#sec-${id}`);
+  el?.scrollIntoView({ behavior: reduced() ? 'auto' : 'smooth', block: 'start' });
+}
+function setActive(id) {
+  if (!id || id === S.active) return;
+  S.active = id; renderTop();
+  history.replaceState(null, '', `${location.search}#${S.run ? encodeURIComponent(S.run.id) + '/' : ''}${id}`);
 }
 
 // ---------- events ----------
 const ACTIONS = {
-  nav: (b) => { clearInterval(replayTimer); S.view = b.dataset.v; S.editing = null; render(true); if (S.view === 'evidence' && S.results) startReplay(); $('#main').focus(); },
-  new: () => { clearInterval(replayTimer); Object.assign(S, { run: null, events: [], agents: [], view: 'rules', results: null, triageResults: null }); render(true); },
+  nav: (b) => { scrollToSec(b.dataset.v); if (b.dataset.v === 'evidence' && S.results) startReplay(); },
+  new: () => { clearInterval(replayTimer); Object.assign(S, { run: null, events: [], agents: [], results: null, triageResults: null, replayOn: false }); render(true); scrollToSec('rules'); },
   open: (b) => { $('#switcher').open = false; selectRun(b.dataset.id); },
   sel: (b) => { S.sel = b.dataset.id; render(true); startReplay(); },
   replay: () => startReplay(),
@@ -868,6 +970,7 @@ const FORMS = {
   }),
   decision: (f, fd, sub) => act(async () => {
     S.run = await api('POST', `/api/runs/${S.run.id}/decision`, { decision: sub?.value || 'block', reviewer: fd.get('reviewer'), note: fd.get('note') || '' });
+    setTimeout(() => scrollToSec('hero'), 150); // watch the barrier come down
     S.runs = await api('GET', '/api/runs');
   }),
 };
@@ -876,7 +979,7 @@ document.addEventListener('click', (e) => {
   const b = e.target.closest('[data-act]'); if (b && !b.disabled) ACTIONS[b.dataset.act]?.(b);
 });
 document.addEventListener('submit', (e) => { const f = e.target; if (FORMS[f.dataset.form]) { e.preventDefault(); if (!S.busy) FORMS[f.dataset.form](f, new FormData(f), e.submitter); } });
-document.addEventListener('input', (e) => { if (e.target.closest('#main form')) S.dirty = true; });
+document.addEventListener('input', (e) => { const sec = e.target.closest('.sec'); if (sec && e.target.closest('form')) S.dirtySec.add(sec.dataset.sec); });
 document.addEventListener('change', (e) => {
   const k = e.target.dataset.change; if (!k) return;
   if (k === 'verdict') { S.verdict = e.target.value; S.results = null; }
@@ -895,9 +998,28 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('#switch
   try { if (MODE === 'mock') { await loadMock(); if (qs.get('viewer') === '1') FX.me = { auth: 'netbird', user: null, groups: [], role: 'viewer', can_act: false }; } } catch (e) { toast(`Could not load mock fixtures: ${e.message}`, 'err'); }
   const [id, view0] = decodeURIComponent(location.hash.slice(1)).split('/'); // read before the first render rewrites the hash
   const view = view0 === 'safety' ? 'infra' : view0;
+  const topH = () => document.documentElement.style.setProperty('--top-h', `${$('.top').offsetHeight}px`);
+  topH(); new ResizeObserver(topH).observe($('.top'));
+  await startScene();
+  const io = new IntersectionObserver((es) => es.forEach((e) => e.isIntersecting && setActive(e.target.dataset.sec)), { rootMargin: '-35% 0px -60% 0px' });
+  document.querySelectorAll('[data-sec]').forEach((el) => io.observe(el));
   await tick();
   const want = S.runs.find((x) => x.id === id) || (MODE === 'snapshot' && S.runs[0]);
-  if (want) await selectRun(want.id, VIEW_FN[view] ? view : undefined);
-  else if (VIEW_FN[id]) { S.view = id; render(true); } else render(true);
+  const target = VIEW_FN[view] || view === 'hero' ? view : VIEW_FN[id] ? id : undefined;
+  if (want) await selectRun(want.id, target); else { render(true); scrollToSec(target); }
   setInterval(tick, 1000);
 })();
+
+// 3D hero, with the SVG diagram as the fallback (no WebGL, reduced motion, ?scene=off, or any scene error).
+async function startScene() {
+  // The reason is kept on the element (not logged) so a silent fallback is still diagnosable.
+  const fallback = (why) => { try { scene?.dispose?.(); } catch { /* already gone */ } scene = null; $('#hero').dataset.fallback = String(why?.message || why || 'error').slice(0, 200);
+    $('#scene').hidden = true; $('#hero-fallback').hidden = false; $('#hero').classList.add('flat'); render(true); };
+  if (qs.get('scene') === 'off' || reduced()) return fallback(qs.get('scene') === 'off' ? 'scene=off' : 'reduced motion');
+  try {
+    const mod = await import('./scene3d.js');
+    if (!mod.webglAvailable()) return fallback('no WebGL');
+    scene = mod.createScene($('#scene'), { onTowerClick: () => scrollToSec('evidence'), onError: fallback });
+    $('#hero-fallback').hidden = true;
+  } catch (e) { fallback(e); }
+}

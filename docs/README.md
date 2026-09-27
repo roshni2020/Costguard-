@@ -65,12 +65,12 @@ More detail, including a sequence diagram: [docs/ARCHITECTURE.md](ARCHITECTURE.m
 
 | Vultr product | What it does here |
 | --- | --- |
-| **Compute** (VX1 `sp-control`) | Control plane, agents, web UI. The Infrastructure tab reads its instance metadata (instance id, region, plan, IPs), so "show me the instance" is one click. |
+| **Compute** (VX1 `sp-control`) | Control plane, agents, web UI. The Infrastructure section reads its instance metadata (instance id, region, plan, IPs), so "show me the instance" is one click. |
 | **Kubernetes Engine** (VKE) | The sandbox cluster: every test batch is a Kubernetes Job under a gVisor RuntimeClass, deleted after the batch. Two node pools on separate VMs: `agent-pool` (agent-written tests) and `data-pool` (replay data only). |
 | **Serverless Inference** (`laguna-s-2.1`) | The LLM behind every agent (`https://api.vultrinference.com/v1`, OpenAI-compatible). The UI shows the model on every LLM call. |
 | **Container Registry** | Holds the sandbox runner image. GitHub Actions builds it from `sandbox_host/Dockerfile.runner` and pushes it here. |
 | **Object Storage** | One evidence bundle per run (linked from Evidence and Decision), plus the public recorded demo page. |
-| **Block Storage** | The run database and the IBM TabFormer dataset on `sp-control` (the Infrastructure tab shows the mount). |
+| **Block Storage** | The run database and the IBM TabFormer dataset on `sp-control` (the Infrastructure section shows the mount). |
 | **VPC** | Private network for the VM and the cluster nodes. |
 
 A Vultr firewall group allows SSH from one IP only. No app port is public. The sandbox pods cannot reach the metadata service, and the probe proves it.
@@ -79,12 +79,12 @@ Setup: [infra/README.md](../infra/README.md).
 
 ## How NetBird is used
 
-- **Zero-port access**: the public URL is served by the NetBird reverse proxy over WireGuard, with no inbound app ports on the Vultr VM. The Infrastructure tab shows the NetBird peers (for example the admin laptop, P2P) with path and latency.
+- **Zero-port access**: the public URL is served by the NetBird reverse proxy over WireGuard, with no inbound app ports on the Vultr VM. The Infrastructure section shows the NetBird peers (for example the admin laptop, P2P) with path and latency.
 - **Identity and roles**: NetBird SSO identifies the user. Members of the `testers` group can approve, run and decide. Everyone else gets a read-only view, and the server records the authenticated identity on the decision.
 - **Lifecycle-bound reviewer link**: while a run awaits a decision, a tester can open a temporary PIN-protected link (`netbird expose`). It closes automatically when the migration is blocked or approved.
 - The control plane reaches the sandbox cluster only through the Kubernetes API over TLS, with a token scoped to the sandbox namespace. Details: [infra/netbird.md](../infra/netbird.md).
 
-## Five safety checkpoints (the Infrastructure tab)
+## Five safety checkpoints (the Infrastructure section)
 
 1. **Cluster check**: VKE nodes are Ready and the `gvisor` RuntimeClass is present.
 2. **Agent ran tests in a sandbox**: every batch records a proof (Job name, runtime).
@@ -130,6 +130,8 @@ python -m pytest tests -q
 # RL experiment
 python -m rl.experiment
 ```
+
+The UI is one scrolling page: a three.js 3D hero (card terminal → OLD A / OLD B / NEW, the human gate, and the two sandbox pools, driven by the live run), then Rules, Approve, Run, Evidence, Decision, Agents, Infrastructure and RL. three.js r186 is vendored in `web/vendor/` (MIT). Without WebGL, with reduced motion, or with `?scene=off`, the hero falls back to an SVG diagram.
 
 UI modes: live (default), `?mock=1` (fixture-driven simulation of all 5 steps; add `&viewer=1` to see the read-only role), `?snapshot=<url of export.json>` (read-only recorded run). Add `?theme=dark` or `?theme=light` to force a theme (dark is the default look for recordings).
 
