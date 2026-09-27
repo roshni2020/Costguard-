@@ -1,0 +1,9 @@
+.rocketride/
+.env
+data/
+__pycache__/
+*.db
+.pytest_cache/
+# RocketRide scaffolding - not used by SwitchProof
+.claude/
+.github/copilot-instructions.md
