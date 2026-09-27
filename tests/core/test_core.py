@@ -92,3 +92,20 @@ def test_replay_fake_dataset(monkeypatch):
 
 def test_bug_library():
     assert len(BUG_LIBRARY) == 8 and HOLDOUT_BUG == "dup_window_units" and HOLDOUT_BUG not in TRAINING_BUGS
+
+
+def test_failing_check_script_is_never_a_pass(monkeypatch):
+    monkeypatch.setenv("SWITCHPROOF_IN_SANDBOX", "1")
+    monkeypatch.delenv("SANDBOX_POOL", raising=False)
+    case = demo_duplicate_case("r").model_copy(update={"check_script": "assert False, 'agent check failed'"})
+    r = run_case(case, set())                      # switches agree -> would be `pass` without the check
+    assert r.verdict == "error" and "check_script failed" in r.error and r.check_output.startswith("exit=1")
+    ok = demo_duplicate_case("r").model_copy(update={"check_script": "print('fine')"})
+    assert run_case(ok, set()).verdict == "pass"
+
+
+def test_replay_source_is_recorded(monkeypatch):
+    from switchcore import dataset
+    monkeypatch.setenv("TABFORMER_CSV", "does-not-exist.csv")
+    dataset.load_replay_cases("r", 50)
+    assert dataset.stats["source"].startswith("generated fallback")

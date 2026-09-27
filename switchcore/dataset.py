@@ -29,6 +29,7 @@ def luhn_pan(prefix: str, n: int) -> str:
 
 def _fake_rows(n: int, seed: int):
     log.warning("TABFORMER CSV NOT FOUND - using %d generated fake rows (development only)", n)
+    stats["source"] = "generated fallback rows (TabFormer CSV not found)"
     rng = random.Random(seed)
     errs = [""] * 90 + ["Insufficient Balance", "Bad PIN", "Bad Card Number", "Bad Expiration", "Technical Glitch", "Bad CVV"]
     for i in range(n):
@@ -50,6 +51,7 @@ def _rows(seed: int):
 
 
 def load_replay_cases(run_id: str, sample_size: int, seed: int = 7) -> list[TestCase]:
+    stats.clear()
     rng = random.Random(seed)
     special, normal = [], []           # stratified: keep every error/refund row, reservoir-sample the rest
     for i, row in enumerate(_rows(seed)):
@@ -66,8 +68,9 @@ def load_replay_cases(run_id: str, sample_size: int, seed: int = 7) -> list[Test
     picked = picked[:sample_size]
     rng.shuffle(picked)
 
+    source = stats.get("source", "IBM TabFormer CSV")
     stats.clear()
-    stats.update(rows_scanned=i + 1, skipped_unmapped_errors=0, duplicates_injected=0)
+    stats.update(source=source, rows_scanned=i + 1, skipped_unmapped_errors=0, duplicates_injected=0)
     cases = []
     for n, row in enumerate(picked):
         case = _to_case(run_id, n, row, rng)

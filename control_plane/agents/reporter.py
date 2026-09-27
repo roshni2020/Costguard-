@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 
 import asyncio
+import os
 import json
 
 import httpx
@@ -42,7 +43,8 @@ async def archive_evidence(run_id: str, loop_iter: int | None = None) -> str | N
         return None
     try:
         body = json.dumps(export_bundle(run_id), default=lambda o: o.model_dump()).encode()
-        url = await asyncio.to_thread(objstore.put, f"runs/{run_id}/evidence.json", body)
+        public = os.environ.get("EVIDENCE_PUBLIC", "1") == "1"   # set 0 for private rules or real customer data
+        url = await asyncio.to_thread(objstore.put, f"runs/{run_id}/evidence.json", body, "application/json", public)
         emit(run_id, "reporter", "info", f"Evidence bundle archived to Vultr Object Storage ({len(body) / 1024:,.0f} KB)",
              {"url": url}, loop_iter=loop_iter)
         return url
@@ -108,8 +110,9 @@ async def file_report(run: Run, loop_iter: int | None = None) -> dict:
                 emit(run.id, "reporter", "info", f"Filed GitHub issue #{issue['number']}", {"url": issue["html_url"]}, loop_iter=loop_iter)
             desc = f"Awaiting human decision: {n_reg} regression(s)" if n_reg else "Awaiting human decision: no regressions"
             await set_status(run, "pending", desc)
-            github.update(status_state="pending", configured=True, sha=gh[2])
-            emit(run.id, "reporter", "info", f"Release gate {CONTEXT} set to pending on {gh[2][:7] or '(no GITHUB_SHA)'}", loop_iter=loop_iter)
+            github.update(status_state="pending", configured=bool(gh[2]), sha=gh[2] or None)
+            emit(run.id, "reporter", "info", f"Release gate {CONTEXT} set to pending on commit {gh[2][:7]}" if gh[2]
+                 else "GITHUB_SHA not set: no commit status posted; release gate held locally as pending", loop_iter=loop_iter)
         except Exception as e:
             github.update(status_state="pending", error=str(e)[:300])
             emit(run.id, "reporter", "warning", f"GitHub call failed: {str(e)[:300]}", loop_iter=loop_iter)

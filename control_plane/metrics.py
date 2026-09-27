@@ -64,7 +64,10 @@ def run_metrics(run_id: str) -> dict:
         "repaired_by_validator": sum(e.message.startswith("Repaired") for e in gen_warnings),
         "rejected_by_human": sum(c.status == "rejected" for c in llm_cases),
         "executed": len(ai_items),
-        "expectation_correct_pct": _pct(sum(it["result"].verdict != "both_wrong" for it in ai_items), len(ai_items)),
+        # judged = the legacy switch ran cleanly: pass/regression = expectation matched legacy, both_wrong = it did not
+        "expectation_correct_pct": _pct(sum(it["result"].verdict in ("pass", "regression") for it in ai_items),
+                                        sum(it["result"].verdict in ("pass", "regression", "both_wrong") for it in ai_items)),
+        "errors_or_noise": sum(it["result"].verdict in ("error", "noise") for it in ai_items),
         "both_wrong": sum(it["result"].verdict == "both_wrong" for it in ai_items),
         "followups_designed_by_triage": sum(c.source == "triage" for c in run.cases),
     }
@@ -96,7 +99,8 @@ def run_metrics(run_id: str) -> dict:
     durations = [it["result"].duration_ms for it in items]
     sandboxes = {"count": run.sandboxes_used, "by_pool": dict(pools),
                  "gvisor": sum(p.runtime == "runsc" for p in run.proofs), "not_gvisor": sum(p.runtime != "runsc" for p in run.proofs),
-                 "destroyed_all": all("destroyed=True" in e.message for e in evs if e.agent == "executor" and "destroyed=" in e.message),
+                 "destroyed_all": bool(run.proofs) and all("destroyed=True" in e.message for e in evs
+                                                           if e.agent == "executor" and "destroyed=" in e.message),
                  "case_ms_avg": round(sum(durations) / len(durations), 1) if durations else None}
 
     wall = (_ts(evs[-1].ts) - _ts(evs[0].ts)).total_seconds() if len(evs) > 1 else 0

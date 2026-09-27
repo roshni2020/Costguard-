@@ -5,6 +5,9 @@
 set -euo pipefail
 ip link show wt0 >/dev/null 2>&1 || { echo "wt0 missing: run 'sudo netbird up --setup-key <key>' first"; exit 1; }
 
+echo "==> enforce AUTH_MODE=netbird (roles from the reverse proxy identity headers)"
+sed -i '/^AUTH_MODE=/d' /etc/switchproof.env && echo "AUTH_MODE=netbird" >> /etc/switchproof.env
+
 echo "==> ufw: SSH + 8000 on wt0 only (Vultr firewall group has no app ports either)"
 apt-get install -y ufw >/dev/null
 ufw allow OpenSSH >/dev/null

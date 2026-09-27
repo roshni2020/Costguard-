@@ -37,6 +37,9 @@ _bg: set[asyncio.Task] = set()
 @asynccontextmanager
 async def lifespan(_app):
     db.conn()
+    if os.environ.get("AUTH_MODE") != "netbird":
+        logging.warning("AUTH_MODE is not netbird: every caller is treated as a tester. Expose this app only over "
+                        "an SSH tunnel or localhost until NetBird is enabled (infra/setup_netbird_control.sh).")
     if sandbox_client.url() is None:
         logging.warning("SANDBOX_HOST_URL is unset: FAKE sandbox mode (tests run on this machine). Never demo like this.")
     t = asyncio.create_task(llm.check_models())

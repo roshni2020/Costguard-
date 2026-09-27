@@ -96,6 +96,8 @@ def run_case(case: TestCase, new_bugs: set[str], old_bugs: set[str] = set(),
                             balance_delta_cents=deltas, duration_ms=0)
         if case.check_script:
             result.check_output = _run_check_script(case.check_script, result)
+            if result.check_output.startswith(("exit=", "timeout")) and not result.check_output.startswith("exit=0"):
+                result.verdict, result.error = "error", "agent-written check_script failed (see check_output)"
     except Exception as e:  # malformed case, socket failure, ...
         result = CaseResult(case_id=case.id, verdict="error", steps=[], balance_delta_cents={},
                             error=f"{type(e).__name__}: {e}", duration_ms=0)
