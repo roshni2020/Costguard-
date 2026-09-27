@@ -1079,7 +1079,7 @@ function showPage(page, { replace = false } = {}) {
   const changed = page !== S.page || replace;
   S.page = page;
   if (replace) history.replaceState(null, '', `${location.search}${pageHash(page)}`);
-  for (const p of PAGES) { const el = $(`#sec-${p}`); el.hidden = p !== page; }
+  for (const p of PAGES) { const el = $(`#sec-${p}`); if (el) el.hidden = p !== page; }   // a missing section must never break navigation
   placeHero(page);
   const el = $(`#sec-${page}`);
   el.classList.remove('enter'); void el.offsetWidth; el.classList.add('enter');
