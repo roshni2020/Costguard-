@@ -14,7 +14,7 @@ AGENTS = {  # name -> (role, uses an LLM)
     "generator": ("Writes concrete ISO 8583 test cases", True),
     "executor": ("Dispatches approved tests to gVisor sandboxes", False),
     "triage": ("Isolates the cause of regressions with follow-up tests", True),
-    "reporter": ("Files the GitHub issue and holds the release gate", True),
+    "reporter": ("Files the GitHub issue and holds the release gate", False),   # templated, no LLM
     "rl": ("RL test explorer trained on CPU inside a sandbox", False),
 }
 _state: dict[tuple[str, str], str] = {}
