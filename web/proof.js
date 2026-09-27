@@ -45,6 +45,7 @@ async function boot() {
     h('header', { onclick: () => panel.classList.toggle('min'), title: 'Collapse or expand' },
       h('span', { class: 'dot', 'aria-hidden': 'true' }), h('b', { text: 'LIVE PROOF · VULTR' }), status),
     body);
+  if (innerWidth < 1500) panel.classList.add('min');   // small windows: start collapsed so it never hides the page
   document.body.append(panel);
   let showPrompt = false, last = 0;
   const tick = async () => {
@@ -77,7 +78,7 @@ function render(body, sys, live, run, evs, showPrompt, togglePrompt) {
   const pods = live.pods || [];
   const nodes = sb.nodes || [];
   const destroyed = (run?.proofs || []).slice(-4).reverse();
-  secs.push(h('section', {}, h('h4', { text: `Vultr Kubernetes · ${sb.mode || '?'}` }),
+  secs.push(h('section', {}, h('h4', { text: sb.mode === 'kubernetes' ? 'Vultr Kubernetes Engine' : `Sandboxes · ${sb.mode || '?'}` }),
     row('gVisor RuntimeClass', h('span', { class: sb.runsc ? 'ok' : 'bad', text: sb.runsc ? 'present ✓' : 'missing' })),
     ...nodes.map((n) => row(n.pool || 'node', h('code', { text: `${n.name} ${n.ready ? '✓ ready' : '✗'}` }))),
     h('div', { class: 'muted', style: 'margin:.35rem 0 .15rem', text: `Sandbox pods right now: ${pods.length}` }),
