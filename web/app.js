@@ -996,7 +996,9 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('#switch
     snapshot: 'Recorded run from our Vultr deployment — live app is behind NetBird. Read-only replay; synthetic data, seeded defect.' }[MODE];
   if (banner) { $('#mode').textContent = banner; $('#mode').hidden = false; }
   try { if (MODE === 'mock') { await loadMock(); if (qs.get('viewer') === '1') FX.me = { auth: 'netbird', user: null, groups: [], role: 'viewer', can_act: false }; } } catch (e) { toast(`Could not load mock fixtures: ${e.message}`, 'err'); }
-  const [id, view0] = decodeURIComponent(location.hash.slice(1)).split('/'); // read before the first render rewrites the hash
+  // run from #<id>/<view> or ?run=<id> (links in GitHub issues use ?run=); read before the first render rewrites the hash
+  const [hashId, view0] = decodeURIComponent(location.hash.slice(1)).split('/');
+  const id = hashId || qs.get('run') || '';
   const view = view0 === 'safety' ? 'infra' : view0;
   const topH = () => document.documentElement.style.setProperty('--top-h', `${$('.top').offsetHeight}px`);
   topH(); new ResizeObserver(topH).observe($('.top'));
@@ -1004,7 +1006,8 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('#switch
   const io = new IntersectionObserver((es) => es.forEach((e) => e.isIntersecting && setActive(e.target.dataset.sec)), { rootMargin: '-35% 0px -60% 0px' });
   document.querySelectorAll('[data-sec]').forEach((el) => io.observe(el));
   await tick();
-  const want = S.runs.find((x) => x.id === id) || (MODE === 'snapshot' && S.runs[0]);
+  // no run asked for: open the most recent one so visitors never land on an empty page
+  const want = S.runs.find((x) => x.id === id) || ((MODE === 'snapshot' || !hashId) && S.runs[0]);
   const target = VIEW_FN[view] || view === 'hero' ? view : VIEW_FN[id] ? id : undefined;
   if (want) await selectRun(want.id, target); else { render(true); scrollToSec(target); }
   setInterval(tick, 1000);
