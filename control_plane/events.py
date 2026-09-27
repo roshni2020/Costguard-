@@ -16,6 +16,7 @@ AGENTS = {  # name -> (role, uses an LLM)
     "triage": ("Isolates the cause of regressions with follow-up tests", True),
     "reporter": ("Files the GitHub issue and holds the release gate", False),   # templated, no LLM
     "rl": ("RL test explorer trained on CPU inside a sandbox", False),
+    "analyst": ("Answers questions about this run: logs, metrics, test cases", True),
 }
 _state: dict[tuple[str, str], str] = {}
 

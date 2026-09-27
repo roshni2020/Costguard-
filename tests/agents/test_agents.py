@@ -2,7 +2,7 @@ import asyncio
 
 from fastapi.testclient import TestClient
 
-from control_plane import db, llm
+from control_plane import analyst, db, llm
 from control_plane.agents import coordinator, generator, triage
 from control_plane.app import app
 from control_plane.demo_flow import DEMO, main as demo_main
@@ -291,3 +291,27 @@ def test_metrics_endpoint_after_a_full_run():
     assert m["ai_quality"]["proposed"] == 12 and m["ai_quality"]["expectation_correct_pct"] == 100.0
     assert m["sandboxes"]["count"] >= 2 and m["counts"]["total"] == sum(r["cases"] for r in m["coverage"]["per_rule"].values())
     assert any(r["run_id"] == run["id"] for r in rows)
+
+
+def test_analyst_answers_from_run_data(monkeypatch):
+    run = demo_main(replay=50)
+    with TestClient(app) as c:
+        r = c.post(f"/api/runs/{run['id']}/ask", json={"question": "Why was the migration blocked?"})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert "regressions" in body["answer"] and set(body["sources"]) >= {"metrics", "test_cases", "agent_log"}
+        assert c.post(f"/api/runs/{run['id']}/ask", json={"question": ""}).status_code == 422
+        names = [a["name"] for a in c.get(f"/api/runs/{run['id']}/agents").json()]
+    assert "analyst" in names
+    evs = db.events(run["id"])
+    assert any(e.agent == "human" and e.to_agent == "analyst" for e in evs)
+    assert any(e.agent == "analyst" and e.to_agent == "human" for e in evs)
+
+    captured = {}
+    async def fake_chat(run_id, agent, messages, **kw):
+        captured["prompt"] = messages[-1]["content"]
+        return {"content": "Blocked because duplicates 1 s+ apart were approved."}
+    monkeypatch.setenv("LLM_OFFLINE", "0")
+    monkeypatch.setattr(llm, "chat", fake_chat)
+    out = asyncio.run(analyst.ask(run["id"], "What went wrong?"))
+    assert out["answer"].startswith("Blocked") and "agent_log" in captured["prompt"] and "Question: What went wrong?" in captured["prompt"]

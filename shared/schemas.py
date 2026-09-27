@@ -112,7 +112,7 @@ class JobResult(BaseModel):
 class Event(BaseModel):
     seq: int
     ts: str
-    agent: Literal["coordinator", "planner", "generator", "human", "executor", "triage", "reporter", "rl", "system"]
+    agent: Literal["coordinator", "planner", "generator", "human", "executor", "triage", "reporter", "rl", "analyst", "system"]
     kind: Literal["info", "progress", "warning", "finding", "decision", "error", "message", "tool_call", "tool_result", "llm_call"]
     message: str
     data: dict = Field(default_factory=dict)

@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from control_plane import db, llm, metrics, netbird, objstore, sandbox_client
+from control_plane import analyst, db, llm, metrics, netbird, objstore, sandbox_client
 from control_plane.agents import coordinator, reporter
 from control_plane.events import agent_statuses, emit, now, say, set_state
 from shared import vultr
@@ -242,6 +242,16 @@ def run_metrics(run_id: str):
 @app.get("/api/metrics")
 def all_metrics():
     return metrics.all_runs()
+
+
+class AskIn(BaseModel):
+    question: str
+
+
+@app.post("/api/runs/{run_id}/ask")
+async def ask(run_id: str, body: AskIn):
+    get(run_id)                     # read-only analyst: viewers may ask too
+    return await analyst.ask(run_id, body.question)
 
 
 @app.get("/api/me")
