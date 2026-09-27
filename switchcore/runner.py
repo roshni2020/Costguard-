@@ -45,7 +45,7 @@ def proof() -> SandboxProof:
         sandbox_id=os.environ.get("SANDBOX_ID", f"local-{uuid.uuid4().hex[:8]}"),
         runtime="runsc" if sandboxed else "local-unsafe",
         hostname=socket.gethostname(),
-        uname=" ".join(platform.uname()),
+        uname=" ".join(x for x in platform.uname() if x),
         network="none" if not ifaces else ",".join(ifaces),
         readonly_rootfs=sandboxed and _readonly_root(),     # outside the sandbox the root fs is the host's: never claim it
     )

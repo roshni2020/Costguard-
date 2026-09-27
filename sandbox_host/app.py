@@ -98,7 +98,7 @@ def health():
     except (OSError, subprocess.TimeoutExpired):
         pass
     return {"kvm": os.path.exists("/dev/kvm") and os.access("/dev/kvm", os.R_OK | os.W_OK), "runsc": runsc,
-            "mode": MODE, "active_sandboxes": len(ACTIVE), "hostname": socket.gethostname(), "uname": " ".join(platform.uname())}
+            "mode": MODE, "active_sandboxes": len(ACTIVE), "hostname": socket.gethostname(), "uname": " ".join(x for x in platform.uname() if x)}
 
 
 @app.post("/batch", dependencies=[Depends(auth)])

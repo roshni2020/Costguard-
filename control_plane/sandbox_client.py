@@ -53,7 +53,7 @@ async def _call(method: str, path: str, body: str | None = None, timeout: float 
 
 def _local_proof() -> SandboxProof:
     return SandboxProof(sandbox_id=f"fake-{uuid.uuid4().hex[:8]}", runtime="local-unsafe", hostname=socket.gethostname(),
-                        uname=" ".join(platform.uname()), network="host", readonly_rootfs=False)
+                        uname=" ".join(x for x in platform.uname() if x), network="host", readonly_rootfs=False)
 
 
 def _fake_batch(req: BatchRequest) -> BatchResult:
@@ -95,7 +95,7 @@ async def probe() -> ProbeResult:
 async def health() -> dict:
     if url() is None:
         return {"mode": "fake", "kvm": False, "runsc": False, "active_sandboxes": 0,
-                "hostname": socket.gethostname(), "uname": " ".join(platform.uname()),
+                "hostname": socket.gethostname(), "uname": " ".join(x for x in platform.uname() if x),
                 "warning": "SANDBOX_HOST_URL unset - tests run in-process (development only)"}
     try:
         return await _call("GET", "/health", timeout=10)

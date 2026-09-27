@@ -286,7 +286,7 @@ def export(run_id: str):
 
 @app.get("/api/system")
 async def system():
-    return {"control_plane": {"hostname": socket.gethostname(), "uname": " ".join(platform.uname())},
+    return {"control_plane": {"hostname": socket.gethostname(), "uname": " ".join(x for x in platform.uname() if x)},
             "sandbox_host": await sandbox_client.health(),
             "llm": {"base_url": llm.base_url(), "model": llm.model_for("coordinator"), "offline": llm.offline(),
                     "reachable": bool(llm.reachable), "models": llm.available_models[:30]}}
