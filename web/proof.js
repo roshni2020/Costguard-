@@ -123,4 +123,13 @@ function render(body, sys, live, run, evs, showPrompt, togglePrompt) {
 function row(k, v) { return h('div', { class: 'row' }, h('span', { text: k }), v instanceof Node ? v : h('span', { text: v })); }
 
 // started last: boot() uses the const helpers above, which don't exist until their line has run
-if (!qs.has('mock') && !qs.has('snapshot')) boot();
+// In the app itself only a small link is shown (the full panel lives on proof.html, so it never covers the app).
+if (!qs.has('mock') && !qs.has('snapshot')) {
+  if (document.body.dataset.proof === 'page') boot();
+  else document.body.append(h('a', { href: 'proof.html', target: '_blank', rel: 'noopener', 'aria-label': 'Open live proof from Vultr in a new tab',
+    style: 'position:fixed;left:16px;bottom:16px;z-index:40;display:inline-flex;align-items:center;gap:.45rem;padding:.45rem .8rem;'
+      + 'background:#0b1220;border:1px solid #2a3b5e;border-radius:999px;color:#e8eef7;font:600 13px/1 ui-monospace,monospace;'
+      + 'letter-spacing:.06em;text-decoration:none;box-shadow:0 6px 20px #0008' },
+    h('span', { style: 'width:.5rem;height:.5rem;border-radius:50%;background:#4ade80;box-shadow:0 0 8px #4ade80', 'aria-hidden': 'true' }),
+    'LIVE PROOF ↗'));
+}
