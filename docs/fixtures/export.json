@@ -1,0 +1,3247 @@
+{
+ "run": {
+  "id": "run_3f2a9c",
+  "title": "Core switch migration — Legacy v4 → NewSwitch v1",
+  "status": "blocked",
+  "created_at": "2026-09-27T16:02:11Z",
+  "requirements": [
+   "Approve a purchase when funds are available",
+   "Decline a purchase for insufficient funds",
+   "Reject a duplicate purchase (same card, STAN and amount within 60 seconds)",
+   "Reverse an approved payment and restore the balance"
+  ],
+  "rules_text": "Legacy v4 checks every 0100/0200 in this order: unknown card -> 14; blocked card -> 62; expired card -> 54; incorrect PIN -> 55; issuer glitch -> 96; duplicate (same card, STAN and amount within 60 seconds) -> 94; balance below amount -> 51; otherwise approve 00 and debit. 0400 reversals: original not found or not approved -> 25; already reversed -> 94; otherwise credit back 00.",
+  "spec_text": "ISO 8583 (ASCII). MTI 0100 auth, 0200 purchase, 0400 reversal. Fields: 2 card number, 3 processing code, 4 amount (12 digits, cents), 7 transmission time MMDDhhmmss, 11 STAN, 14 expiry YYMM, 18 MCC, 22 entry mode, 37 retrieval ref, 39 response code, 41 terminal id, 48 private data, 49 currency (840 = USD).",
+  "bounds": {
+   "max_amount_cents": 100000,
+   "allowed_mti": [
+    "0100",
+    "0200",
+    "0400"
+   ],
+   "auto_followups": true
+  },
+  "replay": {
+   "enabled": true,
+   "sample_size": 2000,
+   "dataset": "tabformer"
+  },
+  "plan": [
+   {
+    "rule": "approve_purchase",
+    "description": "Approve a purchase when funds are available",
+    "states": [
+     "active card, balance > amount",
+     "balance == amount"
+    ]
+   },
+   {
+    "rule": "decline_insufficient",
+    "description": "Decline a purchase for insufficient funds",
+    "states": [
+     "amount > balance",
+     "balance drained by an earlier purchase"
+    ]
+   },
+   {
+    "rule": "reject_duplicate",
+    "description": "Reject a duplicate purchase (same card, STAN and amount within 60 seconds)",
+    "states": [
+     "retry at +5 s",
+     "same STAN, different amount",
+     "retry at +61 s"
+    ]
+   },
+   {
+    "rule": "reverse_approved",
+    "description": "Reverse an approved payment and restore the balance",
+    "states": [
+     "reverse approved purchase",
+     "double reversal",
+     "unknown original"
+    ]
+   }
+  ],
+  "cases": [
+   {
+    "id": "case_01",
+    "run_id": "run_3f2a9c",
+    "title": "Purchase with funds available",
+    "rule": "approve_purchase",
+    "source": "llm",
+    "accounts": [
+     {
+      "pan": "4000056655665556",
+      "balance_cents": 50000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0200",
+      "pan": "4000056655665556",
+      "amount_cents": 4217,
+      "stan": "000201",
+      "at_offset_s": 0.0
+     }
+    ],
+    "expected_codes": [
+     "00"
+    ],
+    "expected_balance_delta_cents": {
+     "4000056655665556": -4217
+    },
+    "check_script": null,
+    "rationale": "Happy path: an active chip card with $500.00 buys $42.17 of groceries.",
+    "status": "approved",
+    "parent_case_id": null
+   },
+   {
+    "id": "case_02",
+    "run_id": "run_3f2a9c",
+    "title": "Purchase of exactly the available balance",
+    "rule": "approve_purchase",
+    "source": "llm",
+    "accounts": [
+     {
+      "pan": "4000056655665556",
+      "balance_cents": 30000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0200",
+      "pan": "4000056655665556",
+      "amount_cents": 30000,
+      "stan": "000202",
+      "at_offset_s": 0.0
+     }
+    ],
+    "expected_codes": [
+     "00"
+    ],
+    "expected_balance_delta_cents": {
+     "4000056655665556": -30000
+    },
+    "check_script": null,
+    "rationale": "Boundary: balance equals amount. Legacy approves when balance >= amount.",
+    "status": "approved",
+    "parent_case_id": null
+   },
+   {
+    "id": "case_03",
+    "run_id": "run_3f2a9c",
+    "title": "Purchase above the available balance",
+    "rule": "decline_insufficient",
+    "source": "llm",
+    "accounts": [
+     {
+      "pan": "5555555555554444",
+      "balance_cents": 30000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0200",
+      "pan": "5555555555554444",
+      "amount_cents": 45000,
+      "stan": "000301",
+      "at_offset_s": 0.0
+     }
+    ],
+    "expected_codes": [
+     "51"
+    ],
+    "expected_balance_delta_cents": {
+     "5555555555554444": 0
+    },
+    "check_script": null,
+    "rationale": "Amount exceeds balance by $150.00; no money should move.",
+    "status": "approved",
+    "parent_case_id": null
+   },
+   {
+    "id": "case_04",
+    "run_id": "run_3f2a9c",
+    "title": "Second purchase exhausts the funds",
+    "rule": "decline_insufficient",
+    "source": "llm",
+    "accounts": [
+     {
+      "pan": "5555555555554444",
+      "balance_cents": 30000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0200",
+      "pan": "5555555555554444",
+      "amount_cents": 20000,
+      "stan": "000302",
+      "at_offset_s": 0.0
+     },
+     {
+      "mti": "0200",
+      "pan": "5555555555554444",
+      "amount_cents": 15000,
+      "stan": "000303",
+      "at_offset_s": 20
+     }
+    ],
+    "expected_codes": [
+     "00",
+     "51"
+    ],
+    "expected_balance_delta_cents": {
+     "5555555555554444": -20000
+    },
+    "check_script": null,
+    "rationale": "State matters: after a $200.00 purchase only $100.00 remains, so $150.00 must decline.",
+    "status": "approved",
+    "parent_case_id": null
+   },
+   {
+    "id": "case_dup_250",
+    "run_id": "run_3f2a9c",
+    "title": "Duplicate $250.00 purchase retried after 5 seconds",
+    "rule": "reject_duplicate",
+    "source": "llm",
+    "accounts": [
+     {
+      "pan": "4111111111111111",
+      "balance_cents": 100000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000123",
+      "at_offset_s": 0.0
+     },
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000123",
+      "at_offset_s": 5
+     }
+    ],
+    "expected_codes": [
+     "00",
+     "94"
+    ],
+    "expected_balance_delta_cents": {
+     "4111111111111111": -25000
+    },
+    "check_script": null,
+    "rationale": "Terminals retry on timeout. Same card, STAN 000123 and amount within 60 s is a duplicate transmission; the customer must be charged once.",
+    "status": "approved",
+    "parent_case_id": null
+   },
+   {
+    "id": "case_06",
+    "run_id": "run_3f2a9c",
+    "title": "Same STAN but different amount is not a duplicate",
+    "rule": "reject_duplicate",
+    "source": "llm",
+    "accounts": [
+     {
+      "pan": "4111111111111111",
+      "balance_cents": 100000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000124",
+      "at_offset_s": 0.0
+     },
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 7500,
+      "stan": "000124",
+      "at_offset_s": 5
+     }
+    ],
+    "expected_codes": [
+     "00",
+     "00"
+    ],
+    "expected_balance_delta_cents": {
+     "4111111111111111": -32500
+    },
+    "check_script": null,
+    "rationale": "Duplicate key is card + STAN + amount; a different amount is a new purchase.",
+    "status": "approved",
+    "parent_case_id": null
+   },
+   {
+    "id": "case_07",
+    "run_id": "run_3f2a9c",
+    "title": "Retry after the 60-second window is a new purchase",
+    "rule": "reject_duplicate",
+    "source": "llm",
+    "accounts": [
+     {
+      "pan": "4111111111111111",
+      "balance_cents": 100000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000125",
+      "at_offset_s": 0.0
+     },
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000125",
+      "at_offset_s": 61
+     }
+    ],
+    "expected_codes": [
+     "00",
+     "00"
+    ],
+    "expected_balance_delta_cents": {
+     "4111111111111111": -50000
+    },
+    "check_script": null,
+    "rationale": "Outside the 60 s duplicate window the legacy switch treats the retry as new.",
+    "status": "approved",
+    "parent_case_id": null
+   },
+   {
+    "id": "case_08",
+    "run_id": "run_3f2a9c",
+    "title": "Reverse an approved purchase",
+    "rule": "reverse_approved",
+    "source": "llm",
+    "accounts": [
+     {
+      "pan": "4000056655665556",
+      "balance_cents": 50000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0200",
+      "pan": "4000056655665556",
+      "amount_cents": 8000,
+      "stan": "000401",
+      "at_offset_s": 0.0
+     },
+     {
+      "mti": "0400",
+      "pan": "4000056655665556",
+      "amount_cents": 8000,
+      "stan": "000402",
+      "at_offset_s": 30,
+      "original_stan": "000401"
+     }
+    ],
+    "expected_codes": [
+     "00",
+     "00"
+    ],
+    "expected_balance_delta_cents": {
+     "4000056655665556": 0
+    },
+    "check_script": null,
+    "rationale": "Reversal must credit the $80.00 back: net balance change is $0.00.",
+    "status": "approved",
+    "parent_case_id": null
+   },
+   {
+    "id": "case_09",
+    "run_id": "run_3f2a9c",
+    "title": "Reversing the same purchase twice",
+    "rule": "reverse_approved",
+    "source": "llm",
+    "accounts": [
+     {
+      "pan": "4000056655665556",
+      "balance_cents": 50000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0200",
+      "pan": "4000056655665556",
+      "amount_cents": 8000,
+      "stan": "000403",
+      "at_offset_s": 0.0
+     },
+     {
+      "mti": "0400",
+      "pan": "4000056655665556",
+      "amount_cents": 8000,
+      "stan": "000404",
+      "at_offset_s": 30,
+      "original_stan": "000403"
+     },
+     {
+      "mti": "0400",
+      "pan": "4000056655665556",
+      "amount_cents": 8000,
+      "stan": "000405",
+      "at_offset_s": 35,
+      "original_stan": "000403"
+     }
+    ],
+    "expected_codes": [
+     "00",
+     "00",
+     "94"
+    ],
+    "expected_balance_delta_cents": {
+     "4000056655665556": 0
+    },
+    "check_script": null,
+    "rationale": "A second reversal must not credit again (would create money).",
+    "status": "approved",
+    "parent_case_id": null
+   },
+   {
+    "id": "case_10",
+    "run_id": "run_3f2a9c",
+    "title": "Reverse a purchase that never happened",
+    "rule": "reverse_approved",
+    "source": "llm",
+    "accounts": [
+     {
+      "pan": "4000056655665556",
+      "balance_cents": 50000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0400",
+      "pan": "4000056655665556",
+      "amount_cents": 8000,
+      "stan": "000406",
+      "at_offset_s": 0,
+      "original_stan": "999999"
+     }
+    ],
+    "expected_codes": [
+     "25"
+    ],
+    "expected_balance_delta_cents": {
+     "4000056655665556": 0
+    },
+    "check_script": null,
+    "rationale": "Original STAN 999999 does not exist: expect 25 Original not found.",
+    "status": "approved",
+    "parent_case_id": null
+   },
+   {
+    "id": "case_tri_0",
+    "run_id": "run_3f2a9c",
+    "title": "Duplicate $250.00 retried after 0 s",
+    "rule": "reject_duplicate",
+    "source": "triage",
+    "accounts": [
+     {
+      "pan": "4111111111111111",
+      "balance_cents": 100000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000700",
+      "at_offset_s": 0.0
+     },
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000700",
+      "at_offset_s": 0
+     }
+    ],
+    "expected_codes": [
+     "00",
+     "94"
+    ],
+    "expected_balance_delta_cents": {
+     "4111111111111111": -25000
+    },
+    "check_script": null,
+    "rationale": "Triage follow-up inside approved bounds: vary the retry gap to 0 s to find where the new switch stops detecting duplicates.",
+    "status": "approved",
+    "parent_case_id": "case_dup_250"
+   },
+   {
+    "id": "case_tri_0p5",
+    "run_id": "run_3f2a9c",
+    "title": "Duplicate $250.00 retried after 0.5 s",
+    "rule": "reject_duplicate",
+    "source": "triage",
+    "accounts": [
+     {
+      "pan": "4111111111111111",
+      "balance_cents": 100000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000701",
+      "at_offset_s": 0.0
+     },
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000701",
+      "at_offset_s": 0.5
+     }
+    ],
+    "expected_codes": [
+     "00",
+     "94"
+    ],
+    "expected_balance_delta_cents": {
+     "4111111111111111": -25000
+    },
+    "check_script": null,
+    "rationale": "Triage follow-up inside approved bounds: vary the retry gap to 0.5 s to find where the new switch stops detecting duplicates.",
+    "status": "approved",
+    "parent_case_id": "case_dup_250"
+   },
+   {
+    "id": "case_tri_1",
+    "run_id": "run_3f2a9c",
+    "title": "Duplicate $250.00 retried after 1 s",
+    "rule": "reject_duplicate",
+    "source": "triage",
+    "accounts": [
+     {
+      "pan": "4111111111111111",
+      "balance_cents": 100000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000702",
+      "at_offset_s": 0.0
+     },
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000702",
+      "at_offset_s": 1
+     }
+    ],
+    "expected_codes": [
+     "00",
+     "94"
+    ],
+    "expected_balance_delta_cents": {
+     "4111111111111111": -25000
+    },
+    "check_script": null,
+    "rationale": "Triage follow-up inside approved bounds: vary the retry gap to 1 s to find where the new switch stops detecting duplicates.",
+    "status": "approved",
+    "parent_case_id": "case_dup_250"
+   },
+   {
+    "id": "case_tri_2",
+    "run_id": "run_3f2a9c",
+    "title": "Duplicate $250.00 retried after 2 s",
+    "rule": "reject_duplicate",
+    "source": "triage",
+    "accounts": [
+     {
+      "pan": "4111111111111111",
+      "balance_cents": 100000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000703",
+      "at_offset_s": 0.0
+     },
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000703",
+      "at_offset_s": 2
+     }
+    ],
+    "expected_codes": [
+     "00",
+     "94"
+    ],
+    "expected_balance_delta_cents": {
+     "4111111111111111": -25000
+    },
+    "check_script": null,
+    "rationale": "Triage follow-up inside approved bounds: vary the retry gap to 2 s to find where the new switch stops detecting duplicates.",
+    "status": "approved",
+    "parent_case_id": "case_dup_250"
+   },
+   {
+    "id": "case_tri_5",
+    "run_id": "run_3f2a9c",
+    "title": "Duplicate $250.00 retried after 5 s",
+    "rule": "reject_duplicate",
+    "source": "triage",
+    "accounts": [
+     {
+      "pan": "4111111111111111",
+      "balance_cents": 100000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000704",
+      "at_offset_s": 0.0
+     },
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000704",
+      "at_offset_s": 5
+     }
+    ],
+    "expected_codes": [
+     "00",
+     "94"
+    ],
+    "expected_balance_delta_cents": {
+     "4111111111111111": -25000
+    },
+    "check_script": null,
+    "rationale": "Triage follow-up inside approved bounds: vary the retry gap to 5 s to find where the new switch stops detecting duplicates.",
+    "status": "approved",
+    "parent_case_id": "case_dup_250"
+   },
+   {
+    "id": "case_tri_30",
+    "run_id": "run_3f2a9c",
+    "title": "Duplicate $250.00 retried after 30 s",
+    "rule": "reject_duplicate",
+    "source": "triage",
+    "accounts": [
+     {
+      "pan": "4111111111111111",
+      "balance_cents": 100000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000705",
+      "at_offset_s": 0.0
+     },
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000705",
+      "at_offset_s": 30
+     }
+    ],
+    "expected_codes": [
+     "00",
+     "94"
+    ],
+    "expected_balance_delta_cents": {
+     "4111111111111111": -25000
+    },
+    "check_script": null,
+    "rationale": "Triage follow-up inside approved bounds: vary the retry gap to 30 s to find where the new switch stops detecting duplicates.",
+    "status": "approved",
+    "parent_case_id": "case_dup_250"
+   },
+   {
+    "id": "case_tri_59",
+    "run_id": "run_3f2a9c",
+    "title": "Duplicate $250.00 retried after 59 s",
+    "rule": "reject_duplicate",
+    "source": "triage",
+    "accounts": [
+     {
+      "pan": "4111111111111111",
+      "balance_cents": 100000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000706",
+      "at_offset_s": 0.0
+     },
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000706",
+      "at_offset_s": 59
+     }
+    ],
+    "expected_codes": [
+     "00",
+     "94"
+    ],
+    "expected_balance_delta_cents": {
+     "4111111111111111": -25000
+    },
+    "check_script": null,
+    "rationale": "Triage follow-up inside approved bounds: vary the retry gap to 59 s to find where the new switch stops detecting duplicates.",
+    "status": "approved",
+    "parent_case_id": "case_dup_250"
+   },
+   {
+    "id": "case_tri_61",
+    "run_id": "run_3f2a9c",
+    "title": "Duplicate $250.00 retried after 61 s",
+    "rule": "reject_duplicate",
+    "source": "triage",
+    "accounts": [
+     {
+      "pan": "4111111111111111",
+      "balance_cents": 100000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000707",
+      "at_offset_s": 0.0
+     },
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000707",
+      "at_offset_s": 61
+     }
+    ],
+    "expected_codes": [
+     "00",
+     "00"
+    ],
+    "expected_balance_delta_cents": {
+     "4111111111111111": -50000
+    },
+    "check_script": null,
+    "rationale": "Triage follow-up inside approved bounds: vary the retry gap to 61 s to find where the new switch stops detecting duplicates.",
+    "status": "approved",
+    "parent_case_id": "case_dup_250"
+   }
+  ],
+  "counts": {
+   "total": 2012,
+   "passed": 1968,
+   "regression": 41,
+   "both_wrong": 0,
+   "noise": 0,
+   "error": 3
+  },
+  "sandboxes_used": 8,
+  "proofs": [
+   {
+    "sandbox_id": "sbx-3f2a00",
+    "runtime": "runsc",
+    "hostname": "sp-3f2a",
+    "uname": "Linux sp-3f2a 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+    "network": "none",
+    "readonly_rootfs": true
+   },
+   {
+    "sandbox_id": "sbx-81c001",
+    "runtime": "runsc",
+    "hostname": "sp-81c0",
+    "uname": "Linux sp-81c0 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+    "network": "none",
+    "readonly_rootfs": true
+   },
+   {
+    "sandbox_id": "sbx-5d1702",
+    "runtime": "runsc",
+    "hostname": "sp-5d17",
+    "uname": "Linux sp-5d17 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+    "network": "none",
+    "readonly_rootfs": true
+   },
+   {
+    "sandbox_id": "sbx-c94e03",
+    "runtime": "runsc",
+    "hostname": "sp-c94e",
+    "uname": "Linux sp-c94e 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+    "network": "none",
+    "readonly_rootfs": true
+   },
+   {
+    "sandbox_id": "sbx-0b6a04",
+    "runtime": "runsc",
+    "hostname": "sp-0b6a",
+    "uname": "Linux sp-0b6a 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+    "network": "none",
+    "readonly_rootfs": true
+   },
+   {
+    "sandbox_id": "sbx-e27305",
+    "runtime": "runsc",
+    "hostname": "sp-e273",
+    "uname": "Linux sp-e273 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+    "network": "none",
+    "readonly_rootfs": true
+   },
+   {
+    "sandbox_id": "sbx-49fd06",
+    "runtime": "runsc",
+    "hostname": "sp-49fd",
+    "uname": "Linux sp-49fd 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+    "network": "none",
+    "readonly_rootfs": true
+   },
+   {
+    "sandbox_id": "sbx-a1c807",
+    "runtime": "runsc",
+    "hostname": "sp-a1c8",
+    "uname": "Linux sp-a1c8 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+    "network": "none",
+    "readonly_rootfs": true
+   }
+  ],
+  "triage": {
+   "summary_md": "## Duplicate purchases are charged twice on NewSwitch v1\n\n**Severity:** critical · **Rule:** Reject a duplicate purchase (same card, STAN and amount within 60 seconds)\n\nThe new switch approves a retried purchase that the legacy switch rejects with **94 Duplicate transmission**.\nBoth legacy copies (Old A and Old B) agree, so this is not noise.\n\n| Retry gap | Old A | Old B | New |\n|---|---|---|---|\n| 0 s | 94 | 94 | 94 |\n| 0.5 s | 94 | 94 | 94 |\n| 1 s | 94 | 94 | **00** |\n| 5 s | 94 | 94 | **00** |\n| 59 s | 94 | 94 | **00** |\n| 61 s | 00 | 00 | 00 |\n\n### Boundary\n- Retries **1 second or more** apart are approved and debited a second time.\n- Retries inside the same second are still caught.\n- After 60 seconds both switches agree (new purchase).\n\n### Root-cause hypothesis\nThe 60-second duplicate window appears to be read as **60 milliseconds** (`dup_window` unit mismatch).\n\n### Money at risk\nIn the 2,000 replayed transactions, 41 regressions totaling `$6,874.12` would have been double-charged.\n\n_Data is IBM TabFormer (public synthetic benchmark). The defect was seeded for this demo._\n",
+   "severity": "critical",
+   "affected_rule": "Reject a duplicate purchase (same card, STAN and amount within 60 seconds)",
+   "root_cause_hypothesis": "Duplicate window of 60 is interpreted as milliseconds, so retries 1 s or more apart are treated as new purchases.",
+   "followup_case_ids": [
+    "case_tri_0",
+    "case_tri_0p5",
+    "case_tri_1",
+    "case_tri_2",
+    "case_tri_5",
+    "case_tri_30",
+    "case_tri_59",
+    "case_tri_61"
+   ],
+   "money_at_risk_cents": 687412
+  },
+  "github": {
+   "issue_url": "https://github.com/switchproof-demo/switchproof/issues/12",
+   "status_state": "failure"
+  },
+  "decision": {
+   "decision": "block",
+   "reviewer": "Roshni K.",
+   "note": "Duplicate retries are double-charged. Blocking until fixed and re-tested.",
+   "ts": "2026-09-27T16:09:03Z"
+  },
+  "rl": {
+   "status": "idle"
+  }
+ },
+ "results": [
+  {
+   "case": {
+    "id": "case_dup_250",
+    "run_id": "run_3f2a9c",
+    "title": "Duplicate $250.00 purchase retried after 5 seconds",
+    "rule": "reject_duplicate",
+    "source": "llm",
+    "accounts": [
+     {
+      "pan": "4111111111111111",
+      "balance_cents": 100000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000123",
+      "at_offset_s": 0.0
+     },
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000123",
+      "at_offset_s": 5
+     }
+    ],
+    "expected_codes": [
+     "00",
+     "94"
+    ],
+    "expected_balance_delta_cents": {
+     "4111111111111111": -25000
+    },
+    "check_script": null,
+    "rationale": "Terminals retry on timeout. Same card, STAN 000123 and amount within 60 s is a duplicate transmission; the customer must be charged once.",
+    "status": "approved",
+    "parent_case_id": null
+   },
+   "result": {
+    "case_id": "case_dup_250",
+    "verdict": "regression",
+    "steps": [
+     {
+      "index": 0,
+      "request_fields": {
+       "t": "0200",
+       "2": "4111111111111111",
+       "3": "000000",
+       "4": "000000025000",
+       "7": "0927120000",
+       "11": "000123",
+       "14": "2912",
+       "18": "5411",
+       "22": "051",
+       "41": "SWPROOF1",
+       "48": "PIN=OK;GLITCH=0",
+       "49": "840"
+      },
+      "request_hex": "00703032303037323234343430303030383138303030313634313131313131313131313131313131303030303030303030303030303235303030303932373132303030303030303132333239313235343131303531535750524f4f463130313550494e3d4f4b3b474c495443483d30383430",
+      "expected_code": "00",
+      "old_a_code": "00",
+      "old_b_code": "00",
+      "new_code": "00",
+      "new_response_hex": "007230323130373232343434303030323831383030303136343131313131313131313131313131313030303030303030303030303032353030303039323731323030303030303031323332393132353431313035313030535750524f4f463130313550494e3d4f4b3b474c495443483d30383430"
+     },
+     {
+      "index": 1,
+      "request_fields": {
+       "t": "0200",
+       "2": "4111111111111111",
+       "3": "000000",
+       "4": "000000025000",
+       "7": "0927120005",
+       "11": "000123",
+       "14": "2912",
+       "18": "5411",
+       "22": "051",
+       "41": "SWPROOF1",
+       "48": "PIN=OK;GLITCH=0",
+       "49": "840"
+      },
+      "request_hex": "00703032303037323234343430303030383138303030313634313131313131313131313131313131303030303030303030303030303235303030303932373132303030353030303132333239313235343131303531535750524f4f463130313550494e3d4f4b3b474c495443483d30383430",
+      "expected_code": "94",
+      "old_a_code": "94",
+      "old_b_code": "94",
+      "new_code": "00",
+      "new_response_hex": "007230323130373232343434303030323831383030303136343131313131313131313131313131313030303030303030303030303032353030303039323731323030303530303031323332393132353431313035313030535750524f4f463130313550494e3d4f4b3b474c495443483d30383430"
+     }
+    ],
+    "balance_delta_cents": {
+     "old_a": {
+      "4111111111111111": -25000
+     },
+     "old_b": {
+      "4111111111111111": -25000
+     },
+     "new": {
+      "4111111111111111": -50000
+     }
+    },
+    "check_output": null,
+    "error": null,
+    "duration_ms": 184
+   }
+  },
+  {
+   "case": {
+    "id": "replay_0001",
+    "run_id": "run_3f2a9c",
+    "title": "Replayed TabFormer transaction #1203 (retry after 3 s)",
+    "rule": "replay",
+    "source": "dataset",
+    "accounts": [
+     {
+      "pan": "4485275742308327",
+      "balance_cents": 250000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0200",
+      "pan": "4485275742308327",
+      "amount_cents": 1899,
+      "stan": "381000",
+      "at_offset_s": 0.0,
+      "mcc": "5812"
+     },
+     {
+      "mti": "0200",
+      "pan": "4485275742308327",
+      "amount_cents": 1899,
+      "stan": "381000",
+      "at_offset_s": 3,
+      "mcc": "5812"
+     }
+    ],
+    "expected_codes": [
+     "00",
+     "94"
+    ],
+    "expected_balance_delta_cents": {
+     "4485275742308327": -1899
+    },
+    "check_script": null,
+    "rationale": "Replayed from IBM TabFormer (public synthetic). Expected codes come from the legacy switch.",
+    "status": "approved",
+    "parent_case_id": null
+   },
+   "result": {
+    "case_id": "replay_0001",
+    "verdict": "regression",
+    "steps": [
+     {
+      "index": 0,
+      "request_fields": {
+       "t": "0200",
+       "2": "4485275742308327",
+       "3": "000000",
+       "4": "000000001899",
+       "7": "0927120000",
+       "11": "381000",
+       "14": "2912",
+       "18": "5812",
+       "22": "051",
+       "41": "SWPROOF1",
+       "48": "PIN=OK;GLITCH=0",
+       "49": "840"
+      },
+      "request_hex": "00703032303037323234343430303030383138303030313634343835323735373432333038333237303030303030303030303030303031383939303932373132303030303338313030303239313235383132303531535750524f4f463130313550494e3d4f4b3b474c495443483d30383430",
+      "expected_code": "00",
+      "old_a_code": "00",
+      "old_b_code": "00",
+      "new_code": "00",
+      "new_response_hex": "007230323130373232343434303030323831383030303136343438353237353734323330383332373030303030303030303030303030313839393039323731323030303033383130303032393132353831323035313030535750524f4f463130313550494e3d4f4b3b474c495443483d30383430"
+     },
+     {
+      "index": 1,
+      "request_fields": {
+       "t": "0200",
+       "2": "4485275742308327",
+       "3": "000000",
+       "4": "000000001899",
+       "7": "0927120003",
+       "11": "381000",
+       "14": "2912",
+       "18": "5812",
+       "22": "051",
+       "41": "SWPROOF1",
+       "48": "PIN=OK;GLITCH=0",
+       "49": "840"
+      },
+      "request_hex": "00703032303037323234343430303030383138303030313634343835323735373432333038333237303030303030303030303030303031383939303932373132303030333338313030303239313235383132303531535750524f4f463130313550494e3d4f4b3b474c495443483d30383430",
+      "expected_code": "94",
+      "old_a_code": "94",
+      "old_b_code": "94",
+      "new_code": "00",
+      "new_response_hex": "007230323130373232343434303030323831383030303136343438353237353734323330383332373030303030303030303030303030313839393039323731323030303333383130303032393132353831323035313030535750524f4f463130313550494e3d4f4b3b474c495443483d30383430"
+     }
+    ],
+    "balance_delta_cents": {
+     "old_a": {
+      "4485275742308327": -1899
+     },
+     "old_b": {
+      "4485275742308327": -1899
+     },
+     "new": {
+      "4485275742308327": -3798
+     }
+    },
+    "check_output": null,
+    "error": null,
+    "duration_ms": 90
+   }
+  },
+  {
+   "case": {
+    "id": "replay_0002",
+    "run_id": "run_3f2a9c",
+    "title": "Replayed TabFormer transaction #1300 (retry after 12 s)",
+    "rule": "replay",
+    "source": "dataset",
+    "accounts": [
+     {
+      "pan": "4716108999716531",
+      "balance_cents": 250000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0200",
+      "pan": "4716108999716531",
+      "amount_cents": 6450,
+      "stan": "381017",
+      "at_offset_s": 0.0,
+      "mcc": "5812"
+     },
+     {
+      "mti": "0200",
+      "pan": "4716108999716531",
+      "amount_cents": 6450,
+      "stan": "381017",
+      "at_offset_s": 12,
+      "mcc": "5812"
+     }
+    ],
+    "expected_codes": [
+     "00",
+     "94"
+    ],
+    "expected_balance_delta_cents": {
+     "4716108999716531": -6450
+    },
+    "check_script": null,
+    "rationale": "Replayed from IBM TabFormer (public synthetic). Expected codes come from the legacy switch.",
+    "status": "approved",
+    "parent_case_id": null
+   },
+   "result": {
+    "case_id": "replay_0002",
+    "verdict": "regression",
+    "steps": [
+     {
+      "index": 0,
+      "request_fields": {
+       "t": "0200",
+       "2": "4716108999716531",
+       "3": "000000",
+       "4": "000000006450",
+       "7": "0927120000",
+       "11": "381017",
+       "14": "2912",
+       "18": "5812",
+       "22": "051",
+       "41": "SWPROOF1",
+       "48": "PIN=OK;GLITCH=0",
+       "49": "840"
+      },
+      "request_hex": "00703032303037323234343430303030383138303030313634373136313038393939373136353331303030303030303030303030303036343530303932373132303030303338313031373239313235383132303531535750524f4f463130313550494e3d4f4b3b474c495443483d30383430",
+      "expected_code": "00",
+      "old_a_code": "00",
+      "old_b_code": "00",
+      "new_code": "00",
+      "new_response_hex": "007230323130373232343434303030323831383030303136343731363130383939393731363533313030303030303030303030303030363435303039323731323030303033383130313732393132353831323035313030535750524f4f463130313550494e3d4f4b3b474c495443483d30383430"
+     },
+     {
+      "index": 1,
+      "request_fields": {
+       "t": "0200",
+       "2": "4716108999716531",
+       "3": "000000",
+       "4": "000000006450",
+       "7": "0927120012",
+       "11": "381017",
+       "14": "2912",
+       "18": "5812",
+       "22": "051",
+       "41": "SWPROOF1",
+       "48": "PIN=OK;GLITCH=0",
+       "49": "840"
+      },
+      "request_hex": "00703032303037323234343430303030383138303030313634373136313038393939373136353331303030303030303030303030303036343530303932373132303031323338313031373239313235383132303531535750524f4f463130313550494e3d4f4b3b474c495443483d30383430",
+      "expected_code": "94",
+      "old_a_code": "94",
+      "old_b_code": "94",
+      "new_code": "00",
+      "new_response_hex": "007230323130373232343434303030323831383030303136343731363130383939393731363533313030303030303030303030303030363435303039323731323030313233383130313732393132353831323035313030535750524f4f463130313550494e3d4f4b3b474c495443483d30383430"
+     }
+    ],
+    "balance_delta_cents": {
+     "old_a": {
+      "4716108999716531": -6450
+     },
+     "old_b": {
+      "4716108999716531": -6450
+     },
+     "new": {
+      "4716108999716531": -12900
+     }
+    },
+    "check_output": null,
+    "error": null,
+    "duration_ms": 97
+   }
+  },
+  {
+   "case": {
+    "id": "replay_0003",
+    "run_id": "run_3f2a9c",
+    "title": "Replayed TabFormer transaction #1397 (retry after 2 s)",
+    "rule": "replay",
+    "source": "dataset",
+    "accounts": [
+     {
+      "pan": "5105105105105100",
+      "balance_cents": 250000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0200",
+      "pan": "5105105105105100",
+      "amount_cents": 23000,
+      "stan": "381034",
+      "at_offset_s": 0.0,
+      "mcc": "5812"
+     },
+     {
+      "mti": "0200",
+      "pan": "5105105105105100",
+      "amount_cents": 23000,
+      "stan": "381034",
+      "at_offset_s": 2,
+      "mcc": "5812"
+     }
+    ],
+    "expected_codes": [
+     "00",
+     "94"
+    ],
+    "expected_balance_delta_cents": {
+     "5105105105105100": -23000
+    },
+    "check_script": null,
+    "rationale": "Replayed from IBM TabFormer (public synthetic). Expected codes come from the legacy switch.",
+    "status": "approved",
+    "parent_case_id": null
+   },
+   "result": {
+    "case_id": "replay_0003",
+    "verdict": "regression",
+    "steps": [
+     {
+      "index": 0,
+      "request_fields": {
+       "t": "0200",
+       "2": "5105105105105100",
+       "3": "000000",
+       "4": "000000023000",
+       "7": "0927120000",
+       "11": "381034",
+       "14": "2912",
+       "18": "5812",
+       "22": "051",
+       "41": "SWPROOF1",
+       "48": "PIN=OK;GLITCH=0",
+       "49": "840"
+      },
+      "request_hex": "00703032303037323234343430303030383138303030313635313035313035313035313035313030303030303030303030303030303233303030303932373132303030303338313033343239313235383132303531535750524f4f463130313550494e3d4f4b3b474c495443483d30383430",
+      "expected_code": "00",
+      "old_a_code": "00",
+      "old_b_code": "00",
+      "new_code": "00",
+      "new_response_hex": "007230323130373232343434303030323831383030303136353130353130353130353130353130303030303030303030303030303032333030303039323731323030303033383130333432393132353831323035313030535750524f4f463130313550494e3d4f4b3b474c495443483d30383430"
+     },
+     {
+      "index": 1,
+      "request_fields": {
+       "t": "0200",
+       "2": "5105105105105100",
+       "3": "000000",
+       "4": "000000023000",
+       "7": "0927120002",
+       "11": "381034",
+       "14": "2912",
+       "18": "5812",
+       "22": "051",
+       "41": "SWPROOF1",
+       "48": "PIN=OK;GLITCH=0",
+       "49": "840"
+      },
+      "request_hex": "00703032303037323234343430303030383138303030313635313035313035313035313035313030303030303030303030303030303233303030303932373132303030323338313033343239313235383132303531535750524f4f463130313550494e3d4f4b3b474c495443483d30383430",
+      "expected_code": "94",
+      "old_a_code": "94",
+      "old_b_code": "94",
+      "new_code": "00",
+      "new_response_hex": "007230323130373232343434303030323831383030303136353130353130353130353130353130303030303030303030303030303032333030303039323731323030303233383130333432393132353831323035313030535750524f4f463130313550494e3d4f4b3b474c495443483d30383430"
+     }
+    ],
+    "balance_delta_cents": {
+     "old_a": {
+      "5105105105105100": -23000
+     },
+     "old_b": {
+      "5105105105105100": -23000
+     },
+     "new": {
+      "5105105105105100": -46000
+     }
+    },
+    "check_output": null,
+    "error": null,
+    "duration_ms": 104
+   }
+  },
+  {
+   "case": {
+    "id": "replay_0004",
+    "run_id": "run_3f2a9c",
+    "title": "Replayed TabFormer transaction #1494 (retry after 41 s)",
+    "rule": "replay",
+    "source": "dataset",
+    "accounts": [
+     {
+      "pan": "4929804463622139",
+      "balance_cents": 250000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0200",
+      "pan": "4929804463622139",
+      "amount_cents": 875,
+      "stan": "381051",
+      "at_offset_s": 0.0,
+      "mcc": "5812"
+     },
+     {
+      "mti": "0200",
+      "pan": "4929804463622139",
+      "amount_cents": 875,
+      "stan": "381051",
+      "at_offset_s": 41,
+      "mcc": "5812"
+     }
+    ],
+    "expected_codes": [
+     "00",
+     "94"
+    ],
+    "expected_balance_delta_cents": {
+     "4929804463622139": -875
+    },
+    "check_script": null,
+    "rationale": "Replayed from IBM TabFormer (public synthetic). Expected codes come from the legacy switch.",
+    "status": "approved",
+    "parent_case_id": null
+   },
+   "result": {
+    "case_id": "replay_0004",
+    "verdict": "regression",
+    "steps": [
+     {
+      "index": 0,
+      "request_fields": {
+       "t": "0200",
+       "2": "4929804463622139",
+       "3": "000000",
+       "4": "000000000875",
+       "7": "0927120000",
+       "11": "381051",
+       "14": "2912",
+       "18": "5812",
+       "22": "051",
+       "41": "SWPROOF1",
+       "48": "PIN=OK;GLITCH=0",
+       "49": "840"
+      },
+      "request_hex": "00703032303037323234343430303030383138303030313634393239383034343633363232313339303030303030303030303030303030383735303932373132303030303338313035313239313235383132303531535750524f4f463130313550494e3d4f4b3b474c495443483d30383430",
+      "expected_code": "00",
+      "old_a_code": "00",
+      "old_b_code": "00",
+      "new_code": "00",
+      "new_response_hex": "007230323130373232343434303030323831383030303136343932393830343436333632323133393030303030303030303030303030303837353039323731323030303033383130353132393132353831323035313030535750524f4f463130313550494e3d4f4b3b474c495443483d30383430"
+     },
+     {
+      "index": 1,
+      "request_fields": {
+       "t": "0200",
+       "2": "4929804463622139",
+       "3": "000000",
+       "4": "000000000875",
+       "7": "0927120041",
+       "11": "381051",
+       "14": "2912",
+       "18": "5812",
+       "22": "051",
+       "41": "SWPROOF1",
+       "48": "PIN=OK;GLITCH=0",
+       "49": "840"
+      },
+      "request_hex": "00703032303037323234343430303030383138303030313634393239383034343633363232313339303030303030303030303030303030383735303932373132303034313338313035313239313235383132303531535750524f4f463130313550494e3d4f4b3b474c495443483d30383430",
+      "expected_code": "94",
+      "old_a_code": "94",
+      "old_b_code": "94",
+      "new_code": "00",
+      "new_response_hex": "007230323130373232343434303030323831383030303136343932393830343436333632323133393030303030303030303030303030303837353039323731323030343133383130353132393132353831323035313030535750524f4f463130313550494e3d4f4b3b474c495443483d30383430"
+     }
+    ],
+    "balance_delta_cents": {
+     "old_a": {
+      "4929804463622139": -875
+     },
+     "old_b": {
+      "4929804463622139": -875
+     },
+     "new": {
+      "4929804463622139": -1750
+     }
+    },
+    "check_output": null,
+    "error": null,
+    "duration_ms": 111
+   }
+  },
+  {
+   "case": {
+    "id": "case_tri_0",
+    "run_id": "run_3f2a9c",
+    "title": "Duplicate $250.00 retried after 0 s",
+    "rule": "reject_duplicate",
+    "source": "triage",
+    "accounts": [
+     {
+      "pan": "4111111111111111",
+      "balance_cents": 100000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000700",
+      "at_offset_s": 0.0
+     },
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000700",
+      "at_offset_s": 0
+     }
+    ],
+    "expected_codes": [
+     "00",
+     "94"
+    ],
+    "expected_balance_delta_cents": {
+     "4111111111111111": -25000
+    },
+    "check_script": null,
+    "rationale": "Triage follow-up inside approved bounds: vary the retry gap to 0 s to find where the new switch stops detecting duplicates.",
+    "status": "approved",
+    "parent_case_id": "case_dup_250"
+   },
+   "result": {
+    "case_id": "case_tri_0",
+    "verdict": "pass",
+    "steps": [
+     {
+      "index": 0,
+      "request_fields": {
+       "t": "0200",
+       "2": "4111111111111111",
+       "3": "000000",
+       "4": "000000025000",
+       "7": "0927120000",
+       "11": "000700",
+       "14": "2912",
+       "18": "5411",
+       "22": "051",
+       "41": "SWPROOF1",
+       "48": "PIN=OK;GLITCH=0",
+       "49": "840"
+      },
+      "request_hex": "00703032303037323234343430303030383138303030313634313131313131313131313131313131303030303030303030303030303235303030303932373132303030303030303730303239313235343131303531535750524f4f463130313550494e3d4f4b3b474c495443483d30383430",
+      "expected_code": "00",
+      "old_a_code": "00",
+      "old_b_code": "00",
+      "new_code": "00",
+      "new_response_hex": "007230323130373232343434303030323831383030303136343131313131313131313131313131313030303030303030303030303032353030303039323731323030303030303037303032393132353431313035313030535750524f4f463130313550494e3d4f4b3b474c495443483d30383430"
+     },
+     {
+      "index": 1,
+      "request_fields": {
+       "t": "0200",
+       "2": "4111111111111111",
+       "3": "000000",
+       "4": "000000025000",
+       "7": "0927120000",
+       "11": "000700",
+       "14": "2912",
+       "18": "5411",
+       "22": "051",
+       "41": "SWPROOF1",
+       "48": "PIN=OK;GLITCH=0",
+       "49": "840"
+      },
+      "request_hex": "00703032303037323234343430303030383138303030313634313131313131313131313131313131303030303030303030303030303235303030303932373132303030303030303730303239313235343131303531535750524f4f463130313550494e3d4f4b3b474c495443483d30383430",
+      "expected_code": "94",
+      "old_a_code": "94",
+      "old_b_code": "94",
+      "new_code": "94",
+      "new_response_hex": "007230323130373232343434303030323831383030303136343131313131313131313131313131313030303030303030303030303032353030303039323731323030303030303037303032393132353431313035313934535750524f4f463130313550494e3d4f4b3b474c495443483d30383430"
+     }
+    ],
+    "balance_delta_cents": {
+     "old_a": {
+      "4111111111111111": -25000
+     },
+     "old_b": {
+      "4111111111111111": -25000
+     },
+     "new": {
+      "4111111111111111": -25000
+     }
+    },
+    "check_output": null,
+    "error": null,
+    "duration_ms": 150
+   }
+  },
+  {
+   "case": {
+    "id": "case_tri_0p5",
+    "run_id": "run_3f2a9c",
+    "title": "Duplicate $250.00 retried after 0.5 s",
+    "rule": "reject_duplicate",
+    "source": "triage",
+    "accounts": [
+     {
+      "pan": "4111111111111111",
+      "balance_cents": 100000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000701",
+      "at_offset_s": 0.0
+     },
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000701",
+      "at_offset_s": 0.5
+     }
+    ],
+    "expected_codes": [
+     "00",
+     "94"
+    ],
+    "expected_balance_delta_cents": {
+     "4111111111111111": -25000
+    },
+    "check_script": null,
+    "rationale": "Triage follow-up inside approved bounds: vary the retry gap to 0.5 s to find where the new switch stops detecting duplicates.",
+    "status": "approved",
+    "parent_case_id": "case_dup_250"
+   },
+   "result": {
+    "case_id": "case_tri_0p5",
+    "verdict": "pass",
+    "steps": [
+     {
+      "index": 0,
+      "request_fields": {
+       "t": "0200",
+       "2": "4111111111111111",
+       "3": "000000",
+       "4": "000000025000",
+       "7": "0927120000",
+       "11": "000701",
+       "14": "2912",
+       "18": "5411",
+       "22": "051",
+       "41": "SWPROOF1",
+       "48": "PIN=OK;GLITCH=0",
+       "49": "840"
+      },
+      "request_hex": "00703032303037323234343430303030383138303030313634313131313131313131313131313131303030303030303030303030303235303030303932373132303030303030303730313239313235343131303531535750524f4f463130313550494e3d4f4b3b474c495443483d30383430",
+      "expected_code": "00",
+      "old_a_code": "00",
+      "old_b_code": "00",
+      "new_code": "00",
+      "new_response_hex": "007230323130373232343434303030323831383030303136343131313131313131313131313131313030303030303030303030303032353030303039323731323030303030303037303132393132353431313035313030535750524f4f463130313550494e3d4f4b3b474c495443483d30383430"
+     },
+     {
+      "index": 1,
+      "request_fields": {
+       "t": "0200",
+       "2": "4111111111111111",
+       "3": "000000",
+       "4": "000000025000",
+       "7": "0927120000",
+       "11": "000701",
+       "14": "2912",
+       "18": "5411",
+       "22": "051",
+       "41": "SWPROOF1",
+       "48": "PIN=OK;GLITCH=0",
+       "49": "840"
+      },
+      "request_hex": "00703032303037323234343430303030383138303030313634313131313131313131313131313131303030303030303030303030303235303030303932373132303030303030303730313239313235343131303531535750524f4f463130313550494e3d4f4b3b474c495443483d30383430",
+      "expected_code": "94",
+      "old_a_code": "94",
+      "old_b_code": "94",
+      "new_code": "94",
+      "new_response_hex": "007230323130373232343434303030323831383030303136343131313131313131313131313131313030303030303030303030303032353030303039323731323030303030303037303132393132353431313035313934535750524f4f463130313550494e3d4f4b3b474c495443483d30383430"
+     }
+    ],
+    "balance_delta_cents": {
+     "old_a": {
+      "4111111111111111": -25000
+     },
+     "old_b": {
+      "4111111111111111": -25000
+     },
+     "new": {
+      "4111111111111111": -25000
+     }
+    },
+    "check_output": null,
+    "error": null,
+    "duration_ms": 161
+   }
+  },
+  {
+   "case": {
+    "id": "case_tri_1",
+    "run_id": "run_3f2a9c",
+    "title": "Duplicate $250.00 retried after 1 s",
+    "rule": "reject_duplicate",
+    "source": "triage",
+    "accounts": [
+     {
+      "pan": "4111111111111111",
+      "balance_cents": 100000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000702",
+      "at_offset_s": 0.0
+     },
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000702",
+      "at_offset_s": 1
+     }
+    ],
+    "expected_codes": [
+     "00",
+     "94"
+    ],
+    "expected_balance_delta_cents": {
+     "4111111111111111": -25000
+    },
+    "check_script": null,
+    "rationale": "Triage follow-up inside approved bounds: vary the retry gap to 1 s to find where the new switch stops detecting duplicates.",
+    "status": "approved",
+    "parent_case_id": "case_dup_250"
+   },
+   "result": {
+    "case_id": "case_tri_1",
+    "verdict": "regression",
+    "steps": [
+     {
+      "index": 0,
+      "request_fields": {
+       "t": "0200",
+       "2": "4111111111111111",
+       "3": "000000",
+       "4": "000000025000",
+       "7": "0927120000",
+       "11": "000702",
+       "14": "2912",
+       "18": "5411",
+       "22": "051",
+       "41": "SWPROOF1",
+       "48": "PIN=OK;GLITCH=0",
+       "49": "840"
+      },
+      "request_hex": "00703032303037323234343430303030383138303030313634313131313131313131313131313131303030303030303030303030303235303030303932373132303030303030303730323239313235343131303531535750524f4f463130313550494e3d4f4b3b474c495443483d30383430",
+      "expected_code": "00",
+      "old_a_code": "00",
+      "old_b_code": "00",
+      "new_code": "00",
+      "new_response_hex": "007230323130373232343434303030323831383030303136343131313131313131313131313131313030303030303030303030303032353030303039323731323030303030303037303232393132353431313035313030535750524f4f463130313550494e3d4f4b3b474c495443483d30383430"
+     },
+     {
+      "index": 1,
+      "request_fields": {
+       "t": "0200",
+       "2": "4111111111111111",
+       "3": "000000",
+       "4": "000000025000",
+       "7": "0927120001",
+       "11": "000702",
+       "14": "2912",
+       "18": "5411",
+       "22": "051",
+       "41": "SWPROOF1",
+       "48": "PIN=OK;GLITCH=0",
+       "49": "840"
+      },
+      "request_hex": "00703032303037323234343430303030383138303030313634313131313131313131313131313131303030303030303030303030303235303030303932373132303030313030303730323239313235343131303531535750524f4f463130313550494e3d4f4b3b474c495443483d30383430",
+      "expected_code": "94",
+      "old_a_code": "94",
+      "old_b_code": "94",
+      "new_code": "00",
+      "new_response_hex": "007230323130373232343434303030323831383030303136343131313131313131313131313131313030303030303030303030303032353030303039323731323030303130303037303232393132353431313035313030535750524f4f463130313550494e3d4f4b3b474c495443483d30383430"
+     }
+    ],
+    "balance_delta_cents": {
+     "old_a": {
+      "4111111111111111": -25000
+     },
+     "old_b": {
+      "4111111111111111": -25000
+     },
+     "new": {
+      "4111111111111111": -50000
+     }
+    },
+    "check_output": null,
+    "error": null,
+    "duration_ms": 172
+   }
+  },
+  {
+   "case": {
+    "id": "case_tri_2",
+    "run_id": "run_3f2a9c",
+    "title": "Duplicate $250.00 retried after 2 s",
+    "rule": "reject_duplicate",
+    "source": "triage",
+    "accounts": [
+     {
+      "pan": "4111111111111111",
+      "balance_cents": 100000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000703",
+      "at_offset_s": 0.0
+     },
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000703",
+      "at_offset_s": 2
+     }
+    ],
+    "expected_codes": [
+     "00",
+     "94"
+    ],
+    "expected_balance_delta_cents": {
+     "4111111111111111": -25000
+    },
+    "check_script": null,
+    "rationale": "Triage follow-up inside approved bounds: vary the retry gap to 2 s to find where the new switch stops detecting duplicates.",
+    "status": "approved",
+    "parent_case_id": "case_dup_250"
+   },
+   "result": {
+    "case_id": "case_tri_2",
+    "verdict": "regression",
+    "steps": [
+     {
+      "index": 0,
+      "request_fields": {
+       "t": "0200",
+       "2": "4111111111111111",
+       "3": "000000",
+       "4": "000000025000",
+       "7": "0927120000",
+       "11": "000703",
+       "14": "2912",
+       "18": "5411",
+       "22": "051",
+       "41": "SWPROOF1",
+       "48": "PIN=OK;GLITCH=0",
+       "49": "840"
+      },
+      "request_hex": "00703032303037323234343430303030383138303030313634313131313131313131313131313131303030303030303030303030303235303030303932373132303030303030303730333239313235343131303531535750524f4f463130313550494e3d4f4b3b474c495443483d30383430",
+      "expected_code": "00",
+      "old_a_code": "00",
+      "old_b_code": "00",
+      "new_code": "00",
+      "new_response_hex": "007230323130373232343434303030323831383030303136343131313131313131313131313131313030303030303030303030303032353030303039323731323030303030303037303332393132353431313035313030535750524f4f463130313550494e3d4f4b3b474c495443483d30383430"
+     },
+     {
+      "index": 1,
+      "request_fields": {
+       "t": "0200",
+       "2": "4111111111111111",
+       "3": "000000",
+       "4": "000000025000",
+       "7": "0927120002",
+       "11": "000703",
+       "14": "2912",
+       "18": "5411",
+       "22": "051",
+       "41": "SWPROOF1",
+       "48": "PIN=OK;GLITCH=0",
+       "49": "840"
+      },
+      "request_hex": "00703032303037323234343430303030383138303030313634313131313131313131313131313131303030303030303030303030303235303030303932373132303030323030303730333239313235343131303531535750524f4f463130313550494e3d4f4b3b474c495443483d30383430",
+      "expected_code": "94",
+      "old_a_code": "94",
+      "old_b_code": "94",
+      "new_code": "00",
+      "new_response_hex": "007230323130373232343434303030323831383030303136343131313131313131313131313131313030303030303030303030303032353030303039323731323030303230303037303332393132353431313035313030535750524f4f463130313550494e3d4f4b3b474c495443483d30383430"
+     }
+    ],
+    "balance_delta_cents": {
+     "old_a": {
+      "4111111111111111": -25000
+     },
+     "old_b": {
+      "4111111111111111": -25000
+     },
+     "new": {
+      "4111111111111111": -50000
+     }
+    },
+    "check_output": null,
+    "error": null,
+    "duration_ms": 183
+   }
+  },
+  {
+   "case": {
+    "id": "case_tri_5",
+    "run_id": "run_3f2a9c",
+    "title": "Duplicate $250.00 retried after 5 s",
+    "rule": "reject_duplicate",
+    "source": "triage",
+    "accounts": [
+     {
+      "pan": "4111111111111111",
+      "balance_cents": 100000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000704",
+      "at_offset_s": 0.0
+     },
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000704",
+      "at_offset_s": 5
+     }
+    ],
+    "expected_codes": [
+     "00",
+     "94"
+    ],
+    "expected_balance_delta_cents": {
+     "4111111111111111": -25000
+    },
+    "check_script": null,
+    "rationale": "Triage follow-up inside approved bounds: vary the retry gap to 5 s to find where the new switch stops detecting duplicates.",
+    "status": "approved",
+    "parent_case_id": "case_dup_250"
+   },
+   "result": {
+    "case_id": "case_tri_5",
+    "verdict": "regression",
+    "steps": [
+     {
+      "index": 0,
+      "request_fields": {
+       "t": "0200",
+       "2": "4111111111111111",
+       "3": "000000",
+       "4": "000000025000",
+       "7": "0927120000",
+       "11": "000704",
+       "14": "2912",
+       "18": "5411",
+       "22": "051",
+       "41": "SWPROOF1",
+       "48": "PIN=OK;GLITCH=0",
+       "49": "840"
+      },
+      "request_hex": "00703032303037323234343430303030383138303030313634313131313131313131313131313131303030303030303030303030303235303030303932373132303030303030303730343239313235343131303531535750524f4f463130313550494e3d4f4b3b474c495443483d30383430",
+      "expected_code": "00",
+      "old_a_code": "00",
+      "old_b_code": "00",
+      "new_code": "00",
+      "new_response_hex": "007230323130373232343434303030323831383030303136343131313131313131313131313131313030303030303030303030303032353030303039323731323030303030303037303432393132353431313035313030535750524f4f463130313550494e3d4f4b3b474c495443483d30383430"
+     },
+     {
+      "index": 1,
+      "request_fields": {
+       "t": "0200",
+       "2": "4111111111111111",
+       "3": "000000",
+       "4": "000000025000",
+       "7": "0927120005",
+       "11": "000704",
+       "14": "2912",
+       "18": "5411",
+       "22": "051",
+       "41": "SWPROOF1",
+       "48": "PIN=OK;GLITCH=0",
+       "49": "840"
+      },
+      "request_hex": "00703032303037323234343430303030383138303030313634313131313131313131313131313131303030303030303030303030303235303030303932373132303030353030303730343239313235343131303531535750524f4f463130313550494e3d4f4b3b474c495443483d30383430",
+      "expected_code": "94",
+      "old_a_code": "94",
+      "old_b_code": "94",
+      "new_code": "00",
+      "new_response_hex": "007230323130373232343434303030323831383030303136343131313131313131313131313131313030303030303030303030303032353030303039323731323030303530303037303432393132353431313035313030535750524f4f463130313550494e3d4f4b3b474c495443483d30383430"
+     }
+    ],
+    "balance_delta_cents": {
+     "old_a": {
+      "4111111111111111": -25000
+     },
+     "old_b": {
+      "4111111111111111": -25000
+     },
+     "new": {
+      "4111111111111111": -50000
+     }
+    },
+    "check_output": null,
+    "error": null,
+    "duration_ms": 194
+   }
+  },
+  {
+   "case": {
+    "id": "case_tri_30",
+    "run_id": "run_3f2a9c",
+    "title": "Duplicate $250.00 retried after 30 s",
+    "rule": "reject_duplicate",
+    "source": "triage",
+    "accounts": [
+     {
+      "pan": "4111111111111111",
+      "balance_cents": 100000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000705",
+      "at_offset_s": 0.0
+     },
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000705",
+      "at_offset_s": 30
+     }
+    ],
+    "expected_codes": [
+     "00",
+     "94"
+    ],
+    "expected_balance_delta_cents": {
+     "4111111111111111": -25000
+    },
+    "check_script": null,
+    "rationale": "Triage follow-up inside approved bounds: vary the retry gap to 30 s to find where the new switch stops detecting duplicates.",
+    "status": "approved",
+    "parent_case_id": "case_dup_250"
+   },
+   "result": {
+    "case_id": "case_tri_30",
+    "verdict": "regression",
+    "steps": [
+     {
+      "index": 0,
+      "request_fields": {
+       "t": "0200",
+       "2": "4111111111111111",
+       "3": "000000",
+       "4": "000000025000",
+       "7": "0927120000",
+       "11": "000705",
+       "14": "2912",
+       "18": "5411",
+       "22": "051",
+       "41": "SWPROOF1",
+       "48": "PIN=OK;GLITCH=0",
+       "49": "840"
+      },
+      "request_hex": "00703032303037323234343430303030383138303030313634313131313131313131313131313131303030303030303030303030303235303030303932373132303030303030303730353239313235343131303531535750524f4f463130313550494e3d4f4b3b474c495443483d30383430",
+      "expected_code": "00",
+      "old_a_code": "00",
+      "old_b_code": "00",
+      "new_code": "00",
+      "new_response_hex": "007230323130373232343434303030323831383030303136343131313131313131313131313131313030303030303030303030303032353030303039323731323030303030303037303532393132353431313035313030535750524f4f463130313550494e3d4f4b3b474c495443483d30383430"
+     },
+     {
+      "index": 1,
+      "request_fields": {
+       "t": "0200",
+       "2": "4111111111111111",
+       "3": "000000",
+       "4": "000000025000",
+       "7": "0927120030",
+       "11": "000705",
+       "14": "2912",
+       "18": "5411",
+       "22": "051",
+       "41": "SWPROOF1",
+       "48": "PIN=OK;GLITCH=0",
+       "49": "840"
+      },
+      "request_hex": "00703032303037323234343430303030383138303030313634313131313131313131313131313131303030303030303030303030303235303030303932373132303033303030303730353239313235343131303531535750524f4f463130313550494e3d4f4b3b474c495443483d30383430",
+      "expected_code": "94",
+      "old_a_code": "94",
+      "old_b_code": "94",
+      "new_code": "00",
+      "new_response_hex": "007230323130373232343434303030323831383030303136343131313131313131313131313131313030303030303030303030303032353030303039323731323030333030303037303532393132353431313035313030535750524f4f463130313550494e3d4f4b3b474c495443483d30383430"
+     }
+    ],
+    "balance_delta_cents": {
+     "old_a": {
+      "4111111111111111": -25000
+     },
+     "old_b": {
+      "4111111111111111": -25000
+     },
+     "new": {
+      "4111111111111111": -50000
+     }
+    },
+    "check_output": null,
+    "error": null,
+    "duration_ms": 205
+   }
+  },
+  {
+   "case": {
+    "id": "case_tri_59",
+    "run_id": "run_3f2a9c",
+    "title": "Duplicate $250.00 retried after 59 s",
+    "rule": "reject_duplicate",
+    "source": "triage",
+    "accounts": [
+     {
+      "pan": "4111111111111111",
+      "balance_cents": 100000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000706",
+      "at_offset_s": 0.0
+     },
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000706",
+      "at_offset_s": 59
+     }
+    ],
+    "expected_codes": [
+     "00",
+     "94"
+    ],
+    "expected_balance_delta_cents": {
+     "4111111111111111": -25000
+    },
+    "check_script": null,
+    "rationale": "Triage follow-up inside approved bounds: vary the retry gap to 59 s to find where the new switch stops detecting duplicates.",
+    "status": "approved",
+    "parent_case_id": "case_dup_250"
+   },
+   "result": {
+    "case_id": "case_tri_59",
+    "verdict": "regression",
+    "steps": [
+     {
+      "index": 0,
+      "request_fields": {
+       "t": "0200",
+       "2": "4111111111111111",
+       "3": "000000",
+       "4": "000000025000",
+       "7": "0927120000",
+       "11": "000706",
+       "14": "2912",
+       "18": "5411",
+       "22": "051",
+       "41": "SWPROOF1",
+       "48": "PIN=OK;GLITCH=0",
+       "49": "840"
+      },
+      "request_hex": "00703032303037323234343430303030383138303030313634313131313131313131313131313131303030303030303030303030303235303030303932373132303030303030303730363239313235343131303531535750524f4f463130313550494e3d4f4b3b474c495443483d30383430",
+      "expected_code": "00",
+      "old_a_code": "00",
+      "old_b_code": "00",
+      "new_code": "00",
+      "new_response_hex": "007230323130373232343434303030323831383030303136343131313131313131313131313131313030303030303030303030303032353030303039323731323030303030303037303632393132353431313035313030535750524f4f463130313550494e3d4f4b3b474c495443483d30383430"
+     },
+     {
+      "index": 1,
+      "request_fields": {
+       "t": "0200",
+       "2": "4111111111111111",
+       "3": "000000",
+       "4": "000000025000",
+       "7": "0927120059",
+       "11": "000706",
+       "14": "2912",
+       "18": "5411",
+       "22": "051",
+       "41": "SWPROOF1",
+       "48": "PIN=OK;GLITCH=0",
+       "49": "840"
+      },
+      "request_hex": "00703032303037323234343430303030383138303030313634313131313131313131313131313131303030303030303030303030303235303030303932373132303035393030303730363239313235343131303531535750524f4f463130313550494e3d4f4b3b474c495443483d30383430",
+      "expected_code": "94",
+      "old_a_code": "94",
+      "old_b_code": "94",
+      "new_code": "00",
+      "new_response_hex": "007230323130373232343434303030323831383030303136343131313131313131313131313131313030303030303030303030303032353030303039323731323030353930303037303632393132353431313035313030535750524f4f463130313550494e3d4f4b3b474c495443483d30383430"
+     }
+    ],
+    "balance_delta_cents": {
+     "old_a": {
+      "4111111111111111": -25000
+     },
+     "old_b": {
+      "4111111111111111": -25000
+     },
+     "new": {
+      "4111111111111111": -50000
+     }
+    },
+    "check_output": null,
+    "error": null,
+    "duration_ms": 216
+   }
+  },
+  {
+   "case": {
+    "id": "case_tri_61",
+    "run_id": "run_3f2a9c",
+    "title": "Duplicate $250.00 retried after 61 s",
+    "rule": "reject_duplicate",
+    "source": "triage",
+    "accounts": [
+     {
+      "pan": "4111111111111111",
+      "balance_cents": 100000
+     }
+    ],
+    "steps": [
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000707",
+      "at_offset_s": 0.0
+     },
+     {
+      "mti": "0200",
+      "pan": "4111111111111111",
+      "amount_cents": 25000,
+      "stan": "000707",
+      "at_offset_s": 61
+     }
+    ],
+    "expected_codes": [
+     "00",
+     "00"
+    ],
+    "expected_balance_delta_cents": {
+     "4111111111111111": -50000
+    },
+    "check_script": null,
+    "rationale": "Triage follow-up inside approved bounds: vary the retry gap to 61 s to find where the new switch stops detecting duplicates.",
+    "status": "approved",
+    "parent_case_id": "case_dup_250"
+   },
+   "result": {
+    "case_id": "case_tri_61",
+    "verdict": "pass",
+    "steps": [
+     {
+      "index": 0,
+      "request_fields": {
+       "t": "0200",
+       "2": "4111111111111111",
+       "3": "000000",
+       "4": "000000025000",
+       "7": "0927120000",
+       "11": "000707",
+       "14": "2912",
+       "18": "5411",
+       "22": "051",
+       "41": "SWPROOF1",
+       "48": "PIN=OK;GLITCH=0",
+       "49": "840"
+      },
+      "request_hex": "00703032303037323234343430303030383138303030313634313131313131313131313131313131303030303030303030303030303235303030303932373132303030303030303730373239313235343131303531535750524f4f463130313550494e3d4f4b3b474c495443483d30383430",
+      "expected_code": "00",
+      "old_a_code": "00",
+      "old_b_code": "00",
+      "new_code": "00",
+      "new_response_hex": "007230323130373232343434303030323831383030303136343131313131313131313131313131313030303030303030303030303032353030303039323731323030303030303037303732393132353431313035313030535750524f4f463130313550494e3d4f4b3b474c495443483d30383430"
+     },
+     {
+      "index": 1,
+      "request_fields": {
+       "t": "0200",
+       "2": "4111111111111111",
+       "3": "000000",
+       "4": "000000025000",
+       "7": "0927120101",
+       "11": "000707",
+       "14": "2912",
+       "18": "5411",
+       "22": "051",
+       "41": "SWPROOF1",
+       "48": "PIN=OK;GLITCH=0",
+       "49": "840"
+      },
+      "request_hex": "00703032303037323234343430303030383138303030313634313131313131313131313131313131303030303030303030303030303235303030303932373132303130313030303730373239313235343131303531535750524f4f463130313550494e3d4f4b3b474c495443483d30383430",
+      "expected_code": "00",
+      "old_a_code": "00",
+      "old_b_code": "00",
+      "new_code": "00",
+      "new_response_hex": "007230323130373232343434303030323831383030303136343131313131313131313131313131313030303030303030303030303032353030303039323731323031303130303037303732393132353431313035313030535750524f4f463130313550494e3d4f4b3b474c495443483d30383430"
+     }
+    ],
+    "balance_delta_cents": {
+     "old_a": {
+      "4111111111111111": -50000
+     },
+     "old_b": {
+      "4111111111111111": -50000
+     },
+     "new": {
+      "4111111111111111": -50000
+     }
+    },
+    "check_output": null,
+    "error": null,
+    "duration_ms": 227
+   }
+  }
+ ],
+ "events": [
+  {
+   "ts": "2026-09-27T16:02:12Z",
+   "agent": "system",
+   "kind": "info",
+   "message": "Run created by tester; 4 rules, bounds: max $1,000.00, MTIs 0100/0200/0400",
+   "data": {
+    "phase": "plan"
+   },
+   "seq": 1
+  },
+  {
+   "ts": "2026-09-27T16:02:13Z",
+   "agent": "human",
+   "kind": "message",
+   "message": "Generate tests for these 4 rules",
+   "data": {
+    "phase": "plan"
+   },
+   "to_agent": "coordinator",
+   "seq": 2
+  },
+  {
+   "ts": "2026-09-27T16:02:14Z",
+   "agent": "coordinator",
+   "kind": "llm_call",
+   "message": "Decide next step",
+   "data": {
+    "prompt": "You are the SwitchProof coordinator. Tools: plan_rules, generate_tests, request_human_approval, execute_tests, generate_followups, triage_findings, file_report, request_human_decision, finish.\nState: status=planning, rules=4, cases=0.\nWhich tool next?",
+    "reply": "{\"tool\": \"plan_rules\", \"args\": {\"rules\": 4}}",
+    "phase": "plan"
+   },
+   "loop_iter": 1,
+   "model": "Qwen/Qwen2.5-32B-Instruct",
+   "tokens_in": 812,
+   "tokens_out": 41,
+   "latency_ms": 1240,
+   "seq": 3
+  },
+  {
+   "ts": "2026-09-27T16:02:15Z",
+   "agent": "coordinator",
+   "kind": "tool_call",
+   "message": "plan_rules(rules=4)",
+   "data": {
+    "args": {
+     "rules": 4
+    },
+    "phase": "plan"
+   },
+   "to_agent": "planner",
+   "loop_iter": 1,
+   "tool": "plan_rules",
+   "seq": 4
+  },
+  {
+   "ts": "2026-09-27T16:02:16Z",
+   "agent": "planner",
+   "kind": "llm_call",
+   "message": "Extract states per rule",
+   "data": {
+    "prompt": "Rules:\n1. Approve a purchase when funds are available\n2. Decline a purchase for insufficient funds\n3. Reject a duplicate purchase (same card, STAN and amount within 60 seconds)\n4. Reverse an approved payment and restore the balance\nLegacy check order: ...\nList the states worth testing for each rule as JSON.",
+    "reply": "[{\"rule\": \"reject_duplicate\", \"states\": [\"retry at +5 s\", \"same STAN, different amount\", \"retry at +61 s\"]}, ...]",
+    "phase": "plan"
+   },
+   "loop_iter": 1,
+   "model": "Qwen/Qwen2.5-32B-Instruct",
+   "tokens_in": 1406,
+   "tokens_out": 388,
+   "latency_ms": 3920,
+   "seq": 5
+  },
+  {
+   "ts": "2026-09-27T16:02:17Z",
+   "agent": "planner",
+   "kind": "message",
+   "message": "Duplicate rule needs time offsets; I will include retries inside and outside 60 s",
+   "data": {
+    "phase": "plan"
+   },
+   "to_agent": "coordinator",
+   "loop_iter": 1,
+   "seq": 6
+  },
+  {
+   "ts": "2026-09-27T16:02:20Z",
+   "agent": "planner",
+   "kind": "info",
+   "message": "Plan ready: 4 rules, 10 states to cover",
+   "data": {
+    "phase": "plan"
+   },
+   "seq": 7
+  },
+  {
+   "ts": "2026-09-27T16:02:20Z",
+   "agent": "planner",
+   "kind": "tool_result",
+   "message": "10 states across 4 rules",
+   "data": {
+    "phase": "plan"
+   },
+   "to_agent": "coordinator",
+   "loop_iter": 1,
+   "tool": "plan_rules",
+   "seq": 8
+  },
+  {
+   "ts": "2026-09-27T16:02:21Z",
+   "agent": "coordinator",
+   "kind": "llm_call",
+   "message": "Decide next step",
+   "data": {
+    "prompt": "State: plan has 10 states, cases=0. Which tool next?",
+    "reply": "{\"tool\": \"generate_tests\", \"args\": {\"per_state\": 1}}",
+    "phase": "plan"
+   },
+   "loop_iter": 2,
+   "model": "Qwen/Qwen2.5-32B-Instruct",
+   "tokens_in": 1022,
+   "tokens_out": 38,
+   "latency_ms": 1110,
+   "seq": 9
+  },
+  {
+   "ts": "2026-09-27T16:02:22Z",
+   "agent": "coordinator",
+   "kind": "tool_call",
+   "message": "generate_tests(per_state=1)",
+   "data": {
+    "args": {
+     "per_state": 1
+    },
+    "phase": "plan"
+   },
+   "to_agent": "generator",
+   "loop_iter": 2,
+   "tool": "generate_tests",
+   "seq": 10
+  },
+  {
+   "ts": "2026-09-27T16:02:23Z",
+   "agent": "generator",
+   "kind": "llm_call",
+   "message": "Write ISO 8583 test cases",
+   "data": {
+    "prompt": "For each state write a TestCase JSON: accounts, steps (mti, card number, amount_cents, stan, at_offset_s), expected_codes, expected_balance_delta_cents, rationale. Stay within max_amount_cents=100000.",
+    "reply": "[{\"title\": \"Duplicate $250.00 purchase retried after 5 seconds\", \"rule\": \"reject_duplicate\", \"steps\": [{\"mti\": \"0200\", \"amount_cents\": 25000, \"stan\": \"000123\", \"at_offset_s\": 0}, {\"mti\": \"0200\", \"amount_cents\": 25000, \"stan\": \"000123\", \"at_offset_s\": 5}], \"expected_codes\": [\"00\", \"94\"]}, ...]",
+    "phase": "plan"
+   },
+   "loop_iter": 2,
+   "model": "Qwen/Qwen2.5-32B-Instruct",
+   "tokens_in": 2310,
+   "tokens_out": 2874,
+   "latency_ms": 11840,
+   "seq": 11
+  },
+  {
+   "ts": "2026-09-27T16:02:24Z",
+   "agent": "generator",
+   "kind": "message",
+   "message": "Using demo card ending 1111 with $1,000.00 for the duplicate cases",
+   "data": {
+    "phase": "plan"
+   },
+   "to_agent": "coordinator",
+   "loop_iter": 2,
+   "seq": 12
+  },
+  {
+   "ts": "2026-09-27T16:02:35Z",
+   "agent": "generator",
+   "kind": "info",
+   "message": "Wrote 10 test cases; all within bounds",
+   "data": {
+    "phase": "plan"
+   },
+   "seq": 13
+  },
+  {
+   "ts": "2026-09-27T16:02:35Z",
+   "agent": "generator",
+   "kind": "tool_result",
+   "message": "10 cases written, 0 rejected by schema check",
+   "data": {
+    "phase": "plan"
+   },
+   "to_agent": "coordinator",
+   "loop_iter": 2,
+   "tool": "generate_tests",
+   "seq": 14
+  },
+  {
+   "ts": "2026-09-27T16:02:36Z",
+   "agent": "coordinator",
+   "kind": "llm_call",
+   "message": "Decide next step",
+   "data": {
+    "prompt": "State: 10 proposed cases, 0 approved. Which tool next?",
+    "reply": "{\"tool\": \"request_human_approval\"}",
+    "phase": "plan"
+   },
+   "loop_iter": 3,
+   "model": "Qwen/Qwen2.5-32B-Instruct",
+   "tokens_in": 1180,
+   "tokens_out": 22,
+   "latency_ms": 980,
+   "seq": 15
+  },
+  {
+   "ts": "2026-09-27T16:02:37Z",
+   "agent": "system",
+   "kind": "info",
+   "message": "Waiting for human approval",
+   "data": {
+    "phase": "plan"
+   },
+   "seq": 16
+  },
+  {
+   "ts": "2026-09-27T16:02:37Z",
+   "agent": "coordinator",
+   "kind": "tool_call",
+   "message": "request_human_approval(cases=10)",
+   "data": {
+    "phase": "plan"
+   },
+   "to_agent": "human",
+   "loop_iter": 3,
+   "tool": "request_human_approval",
+   "seq": 17
+  },
+  {
+   "ts": "2026-09-27T16:02:37Z",
+   "agent": "coordinator",
+   "kind": "message",
+   "message": "10 tests are ready for your review. Nothing runs until you approve.",
+   "data": {
+    "phase": "plan"
+   },
+   "to_agent": "human",
+   "loop_iter": 3,
+   "seq": 18
+  },
+  {
+   "ts": "2026-09-27T16:03:21Z",
+   "agent": "human",
+   "kind": "decision",
+   "message": "Approved 10 of 10 tests and enabled replay of 2,000 TabFormer transactions",
+   "data": {
+    "approved": 10,
+    "rejected": 0,
+    "phase": "run"
+   },
+   "to_agent": "coordinator",
+   "seq": 19
+  },
+  {
+   "ts": "2026-09-27T16:03:22Z",
+   "agent": "coordinator",
+   "kind": "tool_call",
+   "message": "execute_tests(cases=10, replay=2000)",
+   "data": {
+    "args": {
+     "cases": 10,
+     "replay": 2000
+    },
+    "phase": "run"
+   },
+   "to_agent": "executor",
+   "loop_iter": 4,
+   "tool": "execute_tests",
+   "seq": 20
+  },
+  {
+   "ts": "2026-09-27T16:03:23Z",
+   "agent": "executor",
+   "kind": "info",
+   "message": "Split 2,012 cases into 8 batches of up to 256",
+   "data": {
+    "phase": "run"
+   },
+   "seq": 21
+  },
+  {
+   "ts": "2026-09-27T16:03:23Z",
+   "agent": "executor",
+   "kind": "message",
+   "message": "Starting gVisor sandboxes on sp-sandbox (network none, read-only root)",
+   "data": {
+    "phase": "run"
+   },
+   "to_agent": "coordinator",
+   "loop_iter": 4,
+   "seq": 22
+  },
+  {
+   "ts": "2026-09-27T16:03:25Z",
+   "agent": "executor",
+   "kind": "progress",
+   "message": "Sandbox sbx-3f2a00 started (gVisor runsc, network none)",
+   "data": {
+    "sandbox_id": "sbx-3f2a00",
+    "phase": "run"
+   },
+   "seq": 23
+  },
+  {
+   "ts": "2026-09-27T16:03:29Z",
+   "agent": "executor",
+   "kind": "progress",
+   "message": "Batch 1/8: 256 of 2,012 executed, 1 regressions so far",
+   "data": {
+    "done": 256,
+    "regression": 1,
+    "phase": "run"
+   },
+   "seq": 24
+  },
+  {
+   "ts": "2026-09-27T16:03:31Z",
+   "agent": "executor",
+   "kind": "finding",
+   "message": "New switch approved a duplicate $250.00 payment (case_dup_250): old 94, new 00",
+   "data": {
+    "case_id": "case_dup_250",
+    "old_code": "94",
+    "new_code": "00",
+    "balance_delta_cents": {
+     "old_a": {
+      "4111111111111111": -25000
+     },
+     "old_b": {
+      "4111111111111111": -25000
+     },
+     "new": {
+      "4111111111111111": -50000
+     }
+    },
+    "phase": "run"
+   },
+   "seq": 25
+  },
+  {
+   "ts": "2026-09-27T16:03:32Z",
+   "agent": "executor",
+   "kind": "message",
+   "message": "First regression: case_dup_250, old 94 / new 00",
+   "data": {
+    "phase": "run"
+   },
+   "to_agent": "coordinator",
+   "loop_iter": 4,
+   "seq": 26
+  },
+  {
+   "ts": "2026-09-27T16:03:33Z",
+   "agent": "coordinator",
+   "kind": "message",
+   "message": "Noted. Finish the batch; triage runs after execution completes.",
+   "data": {
+    "phase": "run"
+   },
+   "to_agent": "executor",
+   "loop_iter": 4,
+   "seq": 27
+  },
+  {
+   "ts": "2026-09-27T16:03:35Z",
+   "agent": "executor",
+   "kind": "progress",
+   "message": "Batch 1/8 done; sandbox sbx-3f2a00 destroyed",
+   "data": {
+    "batch": 1,
+    "done": 256,
+    "phase": "run"
+   },
+   "seq": 28
+  },
+  {
+   "ts": "2026-09-27T16:03:39Z",
+   "agent": "executor",
+   "kind": "progress",
+   "message": "Sandbox sbx-81c001 started (gVisor runsc, network none)",
+   "data": {
+    "sandbox_id": "sbx-81c001",
+    "phase": "run"
+   },
+   "seq": 29
+  },
+  {
+   "ts": "2026-09-27T16:03:43Z",
+   "agent": "executor",
+   "kind": "progress",
+   "message": "Batch 2/8: 512 of 2,012 executed, 6 regressions so far",
+   "data": {
+    "done": 512,
+    "regression": 6,
+    "phase": "run"
+   },
+   "seq": 30
+  },
+  {
+   "ts": "2026-09-27T16:03:49Z",
+   "agent": "executor",
+   "kind": "progress",
+   "message": "Batch 2/8 done; sandbox sbx-81c001 destroyed",
+   "data": {
+    "batch": 2,
+    "done": 512,
+    "phase": "run"
+   },
+   "seq": 31
+  },
+  {
+   "ts": "2026-09-27T16:03:53Z",
+   "agent": "executor",
+   "kind": "progress",
+   "message": "Sandbox sbx-5d1702 started (gVisor runsc, network none)",
+   "data": {
+    "sandbox_id": "sbx-5d1702",
+    "phase": "run"
+   },
+   "seq": 32
+  },
+  {
+   "ts": "2026-09-27T16:03:57Z",
+   "agent": "executor",
+   "kind": "progress",
+   "message": "Batch 3/8: 768 of 2,012 executed, 11 regressions so far",
+   "data": {
+    "done": 768,
+    "regression": 11,
+    "phase": "run"
+   },
+   "seq": 33
+  },
+  {
+   "ts": "2026-09-27T16:04:03Z",
+   "agent": "executor",
+   "kind": "progress",
+   "message": "Batch 3/8 done; sandbox sbx-5d1702 destroyed",
+   "data": {
+    "batch": 3,
+    "done": 768,
+    "phase": "run"
+   },
+   "seq": 34
+  },
+  {
+   "ts": "2026-09-27T16:04:07Z",
+   "agent": "executor",
+   "kind": "progress",
+   "message": "Sandbox sbx-c94e03 started (gVisor runsc, network none)",
+   "data": {
+    "sandbox_id": "sbx-c94e03",
+    "phase": "run"
+   },
+   "seq": 35
+  },
+  {
+   "ts": "2026-09-27T16:04:11Z",
+   "agent": "executor",
+   "kind": "progress",
+   "message": "Batch 4/8: 1,024 of 2,012 executed, 16 regressions so far",
+   "data": {
+    "done": 1024,
+    "regression": 16,
+    "phase": "run"
+   },
+   "seq": 36
+  },
+  {
+   "ts": "2026-09-27T16:04:17Z",
+   "agent": "executor",
+   "kind": "progress",
+   "message": "Batch 4/8 done; sandbox sbx-c94e03 destroyed",
+   "data": {
+    "batch": 4,
+    "done": 1024,
+    "phase": "run"
+   },
+   "seq": 37
+  },
+  {
+   "ts": "2026-09-27T16:04:21Z",
+   "agent": "executor",
+   "kind": "progress",
+   "message": "Sandbox sbx-0b6a04 started (gVisor runsc, network none)",
+   "data": {
+    "sandbox_id": "sbx-0b6a04",
+    "phase": "run"
+   },
+   "seq": 38
+  },
+  {
+   "ts": "2026-09-27T16:04:25Z",
+   "agent": "executor",
+   "kind": "progress",
+   "message": "Batch 5/8: 1,280 of 2,012 executed, 22 regressions so far",
+   "data": {
+    "done": 1280,
+    "regression": 22,
+    "phase": "run"
+   },
+   "seq": 39
+  },
+  {
+   "ts": "2026-09-27T16:04:31Z",
+   "agent": "executor",
+   "kind": "progress",
+   "message": "Batch 5/8 done; sandbox sbx-0b6a04 destroyed",
+   "data": {
+    "batch": 5,
+    "done": 1280,
+    "phase": "run"
+   },
+   "seq": 40
+  },
+  {
+   "ts": "2026-09-27T16:04:35Z",
+   "agent": "executor",
+   "kind": "progress",
+   "message": "Sandbox sbx-e27305 started (gVisor runsc, network none)",
+   "data": {
+    "sandbox_id": "sbx-e27305",
+    "phase": "run"
+   },
+   "seq": 41
+  },
+  {
+   "ts": "2026-09-27T16:04:39Z",
+   "agent": "executor",
+   "kind": "progress",
+   "message": "Batch 6/8: 1,536 of 2,012 executed, 28 regressions so far",
+   "data": {
+    "done": 1536,
+    "regression": 28,
+    "phase": "run"
+   },
+   "seq": 42
+  },
+  {
+   "ts": "2026-09-27T16:04:45Z",
+   "agent": "executor",
+   "kind": "progress",
+   "message": "Batch 6/8 done; sandbox sbx-e27305 destroyed",
+   "data": {
+    "batch": 6,
+    "done": 1536,
+    "phase": "run"
+   },
+   "seq": 43
+  },
+  {
+   "ts": "2026-09-27T16:04:49Z",
+   "agent": "executor",
+   "kind": "progress",
+   "message": "Sandbox sbx-49fd06 started (gVisor runsc, network none)",
+   "data": {
+    "sandbox_id": "sbx-49fd06",
+    "phase": "run"
+   },
+   "seq": 44
+  },
+  {
+   "ts": "2026-09-27T16:04:53Z",
+   "agent": "executor",
+   "kind": "progress",
+   "message": "Batch 7/8: 1,792 of 2,012 executed, 35 regressions so far",
+   "data": {
+    "done": 1792,
+    "regression": 35,
+    "phase": "run"
+   },
+   "seq": 45
+  },
+  {
+   "ts": "2026-09-27T16:04:59Z",
+   "agent": "executor",
+   "kind": "progress",
+   "message": "Batch 7/8 done; sandbox sbx-49fd06 destroyed",
+   "data": {
+    "batch": 7,
+    "done": 1792,
+    "phase": "run"
+   },
+   "seq": 46
+  },
+  {
+   "ts": "2026-09-27T16:05:03Z",
+   "agent": "executor",
+   "kind": "progress",
+   "message": "Sandbox sbx-a1c807 started (gVisor runsc, network none)",
+   "data": {
+    "sandbox_id": "sbx-a1c807",
+    "phase": "run"
+   },
+   "seq": 47
+  },
+  {
+   "ts": "2026-09-27T16:05:07Z",
+   "agent": "executor",
+   "kind": "progress",
+   "message": "Batch 8/8: 2,012 of 2,012 executed, 41 regressions so far",
+   "data": {
+    "done": 2012,
+    "regression": 41,
+    "phase": "run"
+   },
+   "seq": 48
+  },
+  {
+   "ts": "2026-09-27T16:05:13Z",
+   "agent": "executor",
+   "kind": "progress",
+   "message": "Batch 8/8 done; sandbox sbx-a1c807 destroyed",
+   "data": {
+    "batch": 8,
+    "done": 2012,
+    "phase": "run"
+   },
+   "seq": 49
+  },
+  {
+   "ts": "2026-09-27T16:05:21Z",
+   "agent": "executor",
+   "kind": "warning",
+   "message": "3 replayed transactions timed out and were marked error",
+   "data": {
+    "phase": "run"
+   },
+   "seq": 50
+  },
+  {
+   "ts": "2026-09-27T16:05:22Z",
+   "agent": "executor",
+   "kind": "tool_result",
+   "message": "2,012 executed: 1,968 pass, 41 regression, 3 error",
+   "data": {
+    "phase": "run"
+   },
+   "to_agent": "coordinator",
+   "loop_iter": 4,
+   "tool": "execute_tests",
+   "seq": 51
+  },
+  {
+   "ts": "2026-09-27T16:05:23Z",
+   "agent": "coordinator",
+   "kind": "llm_call",
+   "message": "Decide next step",
+   "data": {
+    "prompt": "State: 41 regressions, top cluster reject_duplicate (41). auto_followups=true. Which tool next?",
+    "reply": "{\"tool\": \"generate_followups\", \"args\": {\"case_id\": \"case_dup_250\"}}",
+    "phase": "triage"
+   },
+   "loop_iter": 5,
+   "model": "Qwen/Qwen2.5-32B-Instruct",
+   "tokens_in": 1530,
+   "tokens_out": 44,
+   "latency_ms": 1310,
+   "seq": 52
+  },
+  {
+   "ts": "2026-09-27T16:05:24Z",
+   "agent": "coordinator",
+   "kind": "tool_call",
+   "message": "generate_followups(case_id=case_dup_250)",
+   "data": {
+    "args": {
+     "case_id": "case_dup_250"
+    },
+    "phase": "triage"
+   },
+   "to_agent": "triage",
+   "loop_iter": 5,
+   "tool": "generate_followups",
+   "seq": 53
+  },
+  {
+   "ts": "2026-09-27T16:05:25Z",
+   "agent": "triage",
+   "kind": "llm_call",
+   "message": "Propose follow-ups to find the boundary",
+   "data": {
+    "prompt": "Regression: duplicate $250.00 retried after 5 s. Old A 94, Old B 94, New 00. Bounds: max $1,000.00, MTI 0200. Propose follow-up cases that vary one variable to find the boundary.",
+    "reply": "Vary retry gap: [0, 0.5, 1, 2, 5, 30, 59, 61] seconds. Keep card, STAN, amount fixed.",
+    "phase": "triage"
+   },
+   "loop_iter": 5,
+   "model": "Qwen/Qwen2.5-32B-Instruct",
+   "tokens_in": 1904,
+   "tokens_out": 512,
+   "latency_ms": 4720,
+   "seq": 54
+  },
+  {
+   "ts": "2026-09-27T16:05:30Z",
+   "agent": "triage",
+   "kind": "tool_call",
+   "message": "execute_tests(followups=8, within_bounds=true)",
+   "data": {
+    "args": {
+     "count": 8
+    },
+    "phase": "triage"
+   },
+   "to_agent": "executor",
+   "loop_iter": 5,
+   "tool": "execute_tests",
+   "seq": 55
+  },
+  {
+   "ts": "2026-09-27T16:05:31Z",
+   "agent": "triage",
+   "kind": "info",
+   "message": "Running 8 follow-ups inside approved bounds (auto follow-ups on)",
+   "data": {
+    "phase": "triage"
+   },
+   "seq": 56
+  },
+  {
+   "ts": "2026-09-27T16:05:32Z",
+   "agent": "triage",
+   "kind": "progress",
+   "message": "Follow-up: retry after 0 s -> Old 94, New 94",
+   "data": {
+    "gap_s": 0,
+    "old": "94",
+    "new": "94",
+    "phase": "triage"
+   },
+   "seq": 57
+  },
+  {
+   "ts": "2026-09-27T16:05:33Z",
+   "agent": "triage",
+   "kind": "progress",
+   "message": "Follow-up: retry after 0.5 s -> Old 94, New 94",
+   "data": {
+    "gap_s": 0.5,
+    "old": "94",
+    "new": "94",
+    "phase": "triage"
+   },
+   "seq": 58
+  },
+  {
+   "ts": "2026-09-27T16:05:34Z",
+   "agent": "triage",
+   "kind": "progress",
+   "message": "Follow-up: retry after 1 s -> Old 94, New 00",
+   "data": {
+    "gap_s": 1,
+    "old": "94",
+    "new": "00",
+    "phase": "triage"
+   },
+   "seq": 59
+  },
+  {
+   "ts": "2026-09-27T16:05:35Z",
+   "agent": "triage",
+   "kind": "progress",
+   "message": "Follow-up: retry after 2 s -> Old 94, New 00",
+   "data": {
+    "gap_s": 2,
+    "old": "94",
+    "new": "00",
+    "phase": "triage"
+   },
+   "seq": 60
+  },
+  {
+   "ts": "2026-09-27T16:05:36Z",
+   "agent": "triage",
+   "kind": "progress",
+   "message": "Follow-up: retry after 5 s -> Old 94, New 00",
+   "data": {
+    "gap_s": 5,
+    "old": "94",
+    "new": "00",
+    "phase": "triage"
+   },
+   "seq": 61
+  },
+  {
+   "ts": "2026-09-27T16:05:37Z",
+   "agent": "triage",
+   "kind": "progress",
+   "message": "Follow-up: retry after 30 s -> Old 94, New 00",
+   "data": {
+    "gap_s": 30,
+    "old": "94",
+    "new": "00",
+    "phase": "triage"
+   },
+   "seq": 62
+  },
+  {
+   "ts": "2026-09-27T16:05:38Z",
+   "agent": "triage",
+   "kind": "progress",
+   "message": "Follow-up: retry after 59 s -> Old 94, New 00",
+   "data": {
+    "gap_s": 59,
+    "old": "94",
+    "new": "00",
+    "phase": "triage"
+   },
+   "seq": 63
+  },
+  {
+   "ts": "2026-09-27T16:05:39Z",
+   "agent": "triage",
+   "kind": "progress",
+   "message": "Follow-up: retry after 61 s -> Old 00, New 00",
+   "data": {
+    "gap_s": 61,
+    "old": "00",
+    "new": "00",
+    "phase": "triage"
+   },
+   "seq": 64
+  },
+  {
+   "ts": "2026-09-27T16:05:44Z",
+   "agent": "executor",
+   "kind": "tool_result",
+   "message": "8 follow-ups executed in sandbox sbx-a1c807, destroyed",
+   "data": {
+    "phase": "triage"
+   },
+   "to_agent": "triage",
+   "loop_iter": 5,
+   "tool": "execute_tests",
+   "seq": 65
+  },
+  {
+   "ts": "2026-09-27T16:05:45Z",
+   "agent": "triage",
+   "kind": "finding",
+   "message": "Boundary found: retries 1 s or more apart are approved by the new switch",
+   "data": {
+    "boundary_s": 1,
+    "phase": "triage"
+   },
+   "seq": 66
+  },
+  {
+   "ts": "2026-09-27T16:05:46Z",
+   "agent": "triage",
+   "kind": "tool_result",
+   "message": "Boundary: gap >= 1 s approved twice; 0-0.5 s caught; 61 s both approve",
+   "data": {
+    "phase": "triage"
+   },
+   "to_agent": "coordinator",
+   "loop_iter": 5,
+   "tool": "generate_followups",
+   "seq": 67
+  },
+  {
+   "ts": "2026-09-27T16:05:47Z",
+   "agent": "coordinator",
+   "kind": "tool_call",
+   "message": "file_report(severity=critical)",
+   "data": {
+    "phase": "triage"
+   },
+   "to_agent": "reporter",
+   "loop_iter": 6,
+   "tool": "file_report",
+   "seq": 68
+  },
+  {
+   "ts": "2026-09-27T16:05:48Z",
+   "agent": "reporter",
+   "kind": "message",
+   "message": "Report drafted from the triage findings (template, no LLM)",
+   "data": {
+    "phase": "triage"
+   },
+   "to_agent": "coordinator",
+   "loop_iter": 6,
+   "seq": 69
+  },
+  {
+   "ts": "2026-09-27T16:05:55Z",
+   "agent": "reporter",
+   "kind": "info",
+   "message": "Filed GitHub issue #12 and set release check to pending",
+   "data": {
+    "issue_url": "https://github.com/switchproof-demo/switchproof/issues/12",
+    "phase": "triage"
+   },
+   "seq": 70
+  },
+  {
+   "ts": "2026-09-27T16:05:56Z",
+   "agent": "reporter",
+   "kind": "tool_result",
+   "message": "Issue #12 filed; commit status pending",
+   "data": {
+    "phase": "triage"
+   },
+   "to_agent": "coordinator",
+   "loop_iter": 6,
+   "tool": "file_report",
+   "seq": 71
+  },
+  {
+   "ts": "2026-09-27T16:05:57Z",
+   "agent": "system",
+   "kind": "info",
+   "message": "Waiting for release decision",
+   "data": {
+    "phase": "triage"
+   },
+   "seq": 72
+  },
+  {
+   "ts": "2026-09-27T16:05:57Z",
+   "agent": "coordinator",
+   "kind": "message",
+   "message": "Critical regression confirmed. Please decide: block the migration or approve release.",
+   "data": {
+    "phase": "triage"
+   },
+   "to_agent": "human",
+   "loop_iter": 6,
+   "seq": 73
+  },
+  {
+   "ts": "2026-09-27T16:09:03Z",
+   "agent": "human",
+   "kind": "decision",
+   "message": "Blocked migration: duplicate retries are double-charged",
+   "data": {
+    "decision": "block",
+    "reviewer": "Roshni K.",
+    "phase": "decision"
+   },
+   "to_agent": "coordinator",
+   "seq": 74
+  },
+  {
+   "ts": "2026-09-27T16:09:04Z",
+   "agent": "reporter",
+   "kind": "decision",
+   "message": "GitHub check set to failure; migration blocked",
+   "data": {
+    "status_state": "failure",
+    "phase": "decision"
+   },
+   "seq": 75
+  }
+ ]
+}

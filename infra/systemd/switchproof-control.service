@@ -1,0 +1,21 @@
+[Unit]
+Description=SwitchProof control plane (API, agents, web UI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=switchproof
+Group=switchproof
+WorkingDirectory=/opt/switchproof
+EnvironmentFile=/etc/switchproof.env
+# BIND_IP defaults to 127.0.0.1; set it to the NetBird IP to expose the UI over NetBird only (infra/netbird.md)
+ExecStart=/opt/switchproof/.venv/bin/uvicorn control_plane.app:app --host ${BIND_IP} --port 8000
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

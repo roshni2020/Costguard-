@@ -1,0 +1,49 @@
+{
+ "proof": {
+  "sandbox_id": "sbx-probe01",
+  "runtime": "runsc",
+  "hostname": "sp-7e19",
+  "uname": "Linux sp-7e19 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+  "network": "none",
+  "readonly_rootfs": true
+ },
+ "checks": [
+  {
+   "name": "Delete everything",
+   "attempted": "rm -rf / --no-preserve-root",
+   "outcome": "BLOCKED",
+   "detail": "Read-only file system; sandbox destroyed afterwards, host untouched"
+  },
+  {
+   "name": "Internet egress",
+   "attempted": "curl -m 3 https://example.com",
+   "outcome": "BLOCKED",
+   "detail": "Network is unreachable (network=none)"
+  },
+  {
+   "name": "Reach control plane",
+   "attempted": "nc -zw2 10.1.96.3 8000",
+   "outcome": "BLOCKED",
+   "detail": "Network is unreachable (network=none)"
+  },
+  {
+   "name": "Write root filesystem",
+   "attempted": "touch /usr/bin/pwned",
+   "outcome": "BLOCKED",
+   "detail": "Read-only file system"
+  },
+  {
+   "name": "Read host /etc",
+   "attempted": "cat /host/etc/shadow",
+   "outcome": "BLOCKED",
+   "detail": "No such file or directory; host paths not mounted"
+  },
+  {
+   "name": "Docker socket",
+   "attempted": "ls -l /var/run/docker.sock",
+   "outcome": "BLOCKED",
+   "detail": "No such file or directory"
+  }
+ ],
+ "destroyed": true
+}

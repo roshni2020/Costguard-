@@ -1,0 +1,866 @@
+{
+ "id": "run_3f2a9c",
+ "title": "Core switch migration — Legacy v4 → NewSwitch v1",
+ "status": "awaiting_decision",
+ "created_at": "2026-09-27T16:02:11Z",
+ "requirements": [
+  "Approve a purchase when funds are available",
+  "Decline a purchase for insufficient funds",
+  "Reject a duplicate purchase (same card, STAN and amount within 60 seconds)",
+  "Reverse an approved payment and restore the balance"
+ ],
+ "rules_text": "Legacy v4 checks every 0100/0200 in this order: unknown card -> 14; blocked card -> 62; expired card -> 54; incorrect PIN -> 55; issuer glitch -> 96; duplicate (same card, STAN and amount within 60 seconds) -> 94; balance below amount -> 51; otherwise approve 00 and debit. 0400 reversals: original not found or not approved -> 25; already reversed -> 94; otherwise credit back 00.",
+ "spec_text": "ISO 8583 (ASCII). MTI 0100 auth, 0200 purchase, 0400 reversal. Fields: 2 card number, 3 processing code, 4 amount (12 digits, cents), 7 transmission time MMDDhhmmss, 11 STAN, 14 expiry YYMM, 18 MCC, 22 entry mode, 37 retrieval ref, 39 response code, 41 terminal id, 48 private data, 49 currency (840 = USD).",
+ "bounds": {
+  "max_amount_cents": 100000,
+  "allowed_mti": [
+   "0100",
+   "0200",
+   "0400"
+  ],
+  "auto_followups": true
+ },
+ "replay": {
+  "enabled": true,
+  "sample_size": 2000,
+  "dataset": "tabformer"
+ },
+ "plan": [
+  {
+   "rule": "approve_purchase",
+   "description": "Approve a purchase when funds are available",
+   "states": [
+    "active card, balance > amount",
+    "balance == amount"
+   ]
+  },
+  {
+   "rule": "decline_insufficient",
+   "description": "Decline a purchase for insufficient funds",
+   "states": [
+    "amount > balance",
+    "balance drained by an earlier purchase"
+   ]
+  },
+  {
+   "rule": "reject_duplicate",
+   "description": "Reject a duplicate purchase (same card, STAN and amount within 60 seconds)",
+   "states": [
+    "retry at +5 s",
+    "same STAN, different amount",
+    "retry at +61 s"
+   ]
+  },
+  {
+   "rule": "reverse_approved",
+   "description": "Reverse an approved payment and restore the balance",
+   "states": [
+    "reverse approved purchase",
+    "double reversal",
+    "unknown original"
+   ]
+  }
+ ],
+ "cases": [
+  {
+   "id": "case_01",
+   "run_id": "run_3f2a9c",
+   "title": "Purchase with funds available",
+   "rule": "approve_purchase",
+   "source": "llm",
+   "accounts": [
+    {
+     "pan": "4000056655665556",
+     "balance_cents": 50000
+    }
+   ],
+   "steps": [
+    {
+     "mti": "0200",
+     "pan": "4000056655665556",
+     "amount_cents": 4217,
+     "stan": "000201",
+     "at_offset_s": 0.0
+    }
+   ],
+   "expected_codes": [
+    "00"
+   ],
+   "expected_balance_delta_cents": {
+    "4000056655665556": -4217
+   },
+   "check_script": null,
+   "rationale": "Happy path: an active chip card with $500.00 buys $42.17 of groceries.",
+   "status": "approved",
+   "parent_case_id": null
+  },
+  {
+   "id": "case_02",
+   "run_id": "run_3f2a9c",
+   "title": "Purchase of exactly the available balance",
+   "rule": "approve_purchase",
+   "source": "llm",
+   "accounts": [
+    {
+     "pan": "4000056655665556",
+     "balance_cents": 30000
+    }
+   ],
+   "steps": [
+    {
+     "mti": "0200",
+     "pan": "4000056655665556",
+     "amount_cents": 30000,
+     "stan": "000202",
+     "at_offset_s": 0.0
+    }
+   ],
+   "expected_codes": [
+    "00"
+   ],
+   "expected_balance_delta_cents": {
+    "4000056655665556": -30000
+   },
+   "check_script": null,
+   "rationale": "Boundary: balance equals amount. Legacy approves when balance >= amount.",
+   "status": "approved",
+   "parent_case_id": null
+  },
+  {
+   "id": "case_03",
+   "run_id": "run_3f2a9c",
+   "title": "Purchase above the available balance",
+   "rule": "decline_insufficient",
+   "source": "llm",
+   "accounts": [
+    {
+     "pan": "5555555555554444",
+     "balance_cents": 30000
+    }
+   ],
+   "steps": [
+    {
+     "mti": "0200",
+     "pan": "5555555555554444",
+     "amount_cents": 45000,
+     "stan": "000301",
+     "at_offset_s": 0.0
+    }
+   ],
+   "expected_codes": [
+    "51"
+   ],
+   "expected_balance_delta_cents": {
+    "5555555555554444": 0
+   },
+   "check_script": null,
+   "rationale": "Amount exceeds balance by $150.00; no money should move.",
+   "status": "approved",
+   "parent_case_id": null
+  },
+  {
+   "id": "case_04",
+   "run_id": "run_3f2a9c",
+   "title": "Second purchase exhausts the funds",
+   "rule": "decline_insufficient",
+   "source": "llm",
+   "accounts": [
+    {
+     "pan": "5555555555554444",
+     "balance_cents": 30000
+    }
+   ],
+   "steps": [
+    {
+     "mti": "0200",
+     "pan": "5555555555554444",
+     "amount_cents": 20000,
+     "stan": "000302",
+     "at_offset_s": 0.0
+    },
+    {
+     "mti": "0200",
+     "pan": "5555555555554444",
+     "amount_cents": 15000,
+     "stan": "000303",
+     "at_offset_s": 20
+    }
+   ],
+   "expected_codes": [
+    "00",
+    "51"
+   ],
+   "expected_balance_delta_cents": {
+    "5555555555554444": -20000
+   },
+   "check_script": null,
+   "rationale": "State matters: after a $200.00 purchase only $100.00 remains, so $150.00 must decline.",
+   "status": "approved",
+   "parent_case_id": null
+  },
+  {
+   "id": "case_dup_250",
+   "run_id": "run_3f2a9c",
+   "title": "Duplicate $250.00 purchase retried after 5 seconds",
+   "rule": "reject_duplicate",
+   "source": "llm",
+   "accounts": [
+    {
+     "pan": "4111111111111111",
+     "balance_cents": 100000
+    }
+   ],
+   "steps": [
+    {
+     "mti": "0200",
+     "pan": "4111111111111111",
+     "amount_cents": 25000,
+     "stan": "000123",
+     "at_offset_s": 0.0
+    },
+    {
+     "mti": "0200",
+     "pan": "4111111111111111",
+     "amount_cents": 25000,
+     "stan": "000123",
+     "at_offset_s": 5
+    }
+   ],
+   "expected_codes": [
+    "00",
+    "94"
+   ],
+   "expected_balance_delta_cents": {
+    "4111111111111111": -25000
+   },
+   "check_script": null,
+   "rationale": "Terminals retry on timeout. Same card, STAN 000123 and amount within 60 s is a duplicate transmission; the customer must be charged once.",
+   "status": "approved",
+   "parent_case_id": null
+  },
+  {
+   "id": "case_06",
+   "run_id": "run_3f2a9c",
+   "title": "Same STAN but different amount is not a duplicate",
+   "rule": "reject_duplicate",
+   "source": "llm",
+   "accounts": [
+    {
+     "pan": "4111111111111111",
+     "balance_cents": 100000
+    }
+   ],
+   "steps": [
+    {
+     "mti": "0200",
+     "pan": "4111111111111111",
+     "amount_cents": 25000,
+     "stan": "000124",
+     "at_offset_s": 0.0
+    },
+    {
+     "mti": "0200",
+     "pan": "4111111111111111",
+     "amount_cents": 7500,
+     "stan": "000124",
+     "at_offset_s": 5
+    }
+   ],
+   "expected_codes": [
+    "00",
+    "00"
+   ],
+   "expected_balance_delta_cents": {
+    "4111111111111111": -32500
+   },
+   "check_script": null,
+   "rationale": "Duplicate key is card + STAN + amount; a different amount is a new purchase.",
+   "status": "approved",
+   "parent_case_id": null
+  },
+  {
+   "id": "case_07",
+   "run_id": "run_3f2a9c",
+   "title": "Retry after the 60-second window is a new purchase",
+   "rule": "reject_duplicate",
+   "source": "llm",
+   "accounts": [
+    {
+     "pan": "4111111111111111",
+     "balance_cents": 100000
+    }
+   ],
+   "steps": [
+    {
+     "mti": "0200",
+     "pan": "4111111111111111",
+     "amount_cents": 25000,
+     "stan": "000125",
+     "at_offset_s": 0.0
+    },
+    {
+     "mti": "0200",
+     "pan": "4111111111111111",
+     "amount_cents": 25000,
+     "stan": "000125",
+     "at_offset_s": 61
+    }
+   ],
+   "expected_codes": [
+    "00",
+    "00"
+   ],
+   "expected_balance_delta_cents": {
+    "4111111111111111": -50000
+   },
+   "check_script": null,
+   "rationale": "Outside the 60 s duplicate window the legacy switch treats the retry as new.",
+   "status": "approved",
+   "parent_case_id": null
+  },
+  {
+   "id": "case_08",
+   "run_id": "run_3f2a9c",
+   "title": "Reverse an approved purchase",
+   "rule": "reverse_approved",
+   "source": "llm",
+   "accounts": [
+    {
+     "pan": "4000056655665556",
+     "balance_cents": 50000
+    }
+   ],
+   "steps": [
+    {
+     "mti": "0200",
+     "pan": "4000056655665556",
+     "amount_cents": 8000,
+     "stan": "000401",
+     "at_offset_s": 0.0
+    },
+    {
+     "mti": "0400",
+     "pan": "4000056655665556",
+     "amount_cents": 8000,
+     "stan": "000402",
+     "at_offset_s": 30,
+     "original_stan": "000401"
+    }
+   ],
+   "expected_codes": [
+    "00",
+    "00"
+   ],
+   "expected_balance_delta_cents": {
+    "4000056655665556": 0
+   },
+   "check_script": null,
+   "rationale": "Reversal must credit the $80.00 back: net balance change is $0.00.",
+   "status": "approved",
+   "parent_case_id": null
+  },
+  {
+   "id": "case_09",
+   "run_id": "run_3f2a9c",
+   "title": "Reversing the same purchase twice",
+   "rule": "reverse_approved",
+   "source": "llm",
+   "accounts": [
+    {
+     "pan": "4000056655665556",
+     "balance_cents": 50000
+    }
+   ],
+   "steps": [
+    {
+     "mti": "0200",
+     "pan": "4000056655665556",
+     "amount_cents": 8000,
+     "stan": "000403",
+     "at_offset_s": 0.0
+    },
+    {
+     "mti": "0400",
+     "pan": "4000056655665556",
+     "amount_cents": 8000,
+     "stan": "000404",
+     "at_offset_s": 30,
+     "original_stan": "000403"
+    },
+    {
+     "mti": "0400",
+     "pan": "4000056655665556",
+     "amount_cents": 8000,
+     "stan": "000405",
+     "at_offset_s": 35,
+     "original_stan": "000403"
+    }
+   ],
+   "expected_codes": [
+    "00",
+    "00",
+    "94"
+   ],
+   "expected_balance_delta_cents": {
+    "4000056655665556": 0
+   },
+   "check_script": null,
+   "rationale": "A second reversal must not credit again (would create money).",
+   "status": "approved",
+   "parent_case_id": null
+  },
+  {
+   "id": "case_10",
+   "run_id": "run_3f2a9c",
+   "title": "Reverse a purchase that never happened",
+   "rule": "reverse_approved",
+   "source": "llm",
+   "accounts": [
+    {
+     "pan": "4000056655665556",
+     "balance_cents": 50000
+    }
+   ],
+   "steps": [
+    {
+     "mti": "0400",
+     "pan": "4000056655665556",
+     "amount_cents": 8000,
+     "stan": "000406",
+     "at_offset_s": 0,
+     "original_stan": "999999"
+    }
+   ],
+   "expected_codes": [
+    "25"
+   ],
+   "expected_balance_delta_cents": {
+    "4000056655665556": 0
+   },
+   "check_script": null,
+   "rationale": "Original STAN 999999 does not exist: expect 25 Original not found.",
+   "status": "approved",
+   "parent_case_id": null
+  },
+  {
+   "id": "case_tri_0",
+   "run_id": "run_3f2a9c",
+   "title": "Duplicate $250.00 retried after 0 s",
+   "rule": "reject_duplicate",
+   "source": "triage",
+   "accounts": [
+    {
+     "pan": "4111111111111111",
+     "balance_cents": 100000
+    }
+   ],
+   "steps": [
+    {
+     "mti": "0200",
+     "pan": "4111111111111111",
+     "amount_cents": 25000,
+     "stan": "000700",
+     "at_offset_s": 0.0
+    },
+    {
+     "mti": "0200",
+     "pan": "4111111111111111",
+     "amount_cents": 25000,
+     "stan": "000700",
+     "at_offset_s": 0
+    }
+   ],
+   "expected_codes": [
+    "00",
+    "94"
+   ],
+   "expected_balance_delta_cents": {
+    "4111111111111111": -25000
+   },
+   "check_script": null,
+   "rationale": "Triage follow-up inside approved bounds: vary the retry gap to 0 s to find where the new switch stops detecting duplicates.",
+   "status": "approved",
+   "parent_case_id": "case_dup_250"
+  },
+  {
+   "id": "case_tri_0p5",
+   "run_id": "run_3f2a9c",
+   "title": "Duplicate $250.00 retried after 0.5 s",
+   "rule": "reject_duplicate",
+   "source": "triage",
+   "accounts": [
+    {
+     "pan": "4111111111111111",
+     "balance_cents": 100000
+    }
+   ],
+   "steps": [
+    {
+     "mti": "0200",
+     "pan": "4111111111111111",
+     "amount_cents": 25000,
+     "stan": "000701",
+     "at_offset_s": 0.0
+    },
+    {
+     "mti": "0200",
+     "pan": "4111111111111111",
+     "amount_cents": 25000,
+     "stan": "000701",
+     "at_offset_s": 0.5
+    }
+   ],
+   "expected_codes": [
+    "00",
+    "94"
+   ],
+   "expected_balance_delta_cents": {
+    "4111111111111111": -25000
+   },
+   "check_script": null,
+   "rationale": "Triage follow-up inside approved bounds: vary the retry gap to 0.5 s to find where the new switch stops detecting duplicates.",
+   "status": "approved",
+   "parent_case_id": "case_dup_250"
+  },
+  {
+   "id": "case_tri_1",
+   "run_id": "run_3f2a9c",
+   "title": "Duplicate $250.00 retried after 1 s",
+   "rule": "reject_duplicate",
+   "source": "triage",
+   "accounts": [
+    {
+     "pan": "4111111111111111",
+     "balance_cents": 100000
+    }
+   ],
+   "steps": [
+    {
+     "mti": "0200",
+     "pan": "4111111111111111",
+     "amount_cents": 25000,
+     "stan": "000702",
+     "at_offset_s": 0.0
+    },
+    {
+     "mti": "0200",
+     "pan": "4111111111111111",
+     "amount_cents": 25000,
+     "stan": "000702",
+     "at_offset_s": 1
+    }
+   ],
+   "expected_codes": [
+    "00",
+    "94"
+   ],
+   "expected_balance_delta_cents": {
+    "4111111111111111": -25000
+   },
+   "check_script": null,
+   "rationale": "Triage follow-up inside approved bounds: vary the retry gap to 1 s to find where the new switch stops detecting duplicates.",
+   "status": "approved",
+   "parent_case_id": "case_dup_250"
+  },
+  {
+   "id": "case_tri_2",
+   "run_id": "run_3f2a9c",
+   "title": "Duplicate $250.00 retried after 2 s",
+   "rule": "reject_duplicate",
+   "source": "triage",
+   "accounts": [
+    {
+     "pan": "4111111111111111",
+     "balance_cents": 100000
+    }
+   ],
+   "steps": [
+    {
+     "mti": "0200",
+     "pan": "4111111111111111",
+     "amount_cents": 25000,
+     "stan": "000703",
+     "at_offset_s": 0.0
+    },
+    {
+     "mti": "0200",
+     "pan": "4111111111111111",
+     "amount_cents": 25000,
+     "stan": "000703",
+     "at_offset_s": 2
+    }
+   ],
+   "expected_codes": [
+    "00",
+    "94"
+   ],
+   "expected_balance_delta_cents": {
+    "4111111111111111": -25000
+   },
+   "check_script": null,
+   "rationale": "Triage follow-up inside approved bounds: vary the retry gap to 2 s to find where the new switch stops detecting duplicates.",
+   "status": "approved",
+   "parent_case_id": "case_dup_250"
+  },
+  {
+   "id": "case_tri_5",
+   "run_id": "run_3f2a9c",
+   "title": "Duplicate $250.00 retried after 5 s",
+   "rule": "reject_duplicate",
+   "source": "triage",
+   "accounts": [
+    {
+     "pan": "4111111111111111",
+     "balance_cents": 100000
+    }
+   ],
+   "steps": [
+    {
+     "mti": "0200",
+     "pan": "4111111111111111",
+     "amount_cents": 25000,
+     "stan": "000704",
+     "at_offset_s": 0.0
+    },
+    {
+     "mti": "0200",
+     "pan": "4111111111111111",
+     "amount_cents": 25000,
+     "stan": "000704",
+     "at_offset_s": 5
+    }
+   ],
+   "expected_codes": [
+    "00",
+    "94"
+   ],
+   "expected_balance_delta_cents": {
+    "4111111111111111": -25000
+   },
+   "check_script": null,
+   "rationale": "Triage follow-up inside approved bounds: vary the retry gap to 5 s to find where the new switch stops detecting duplicates.",
+   "status": "approved",
+   "parent_case_id": "case_dup_250"
+  },
+  {
+   "id": "case_tri_30",
+   "run_id": "run_3f2a9c",
+   "title": "Duplicate $250.00 retried after 30 s",
+   "rule": "reject_duplicate",
+   "source": "triage",
+   "accounts": [
+    {
+     "pan": "4111111111111111",
+     "balance_cents": 100000
+    }
+   ],
+   "steps": [
+    {
+     "mti": "0200",
+     "pan": "4111111111111111",
+     "amount_cents": 25000,
+     "stan": "000705",
+     "at_offset_s": 0.0
+    },
+    {
+     "mti": "0200",
+     "pan": "4111111111111111",
+     "amount_cents": 25000,
+     "stan": "000705",
+     "at_offset_s": 30
+    }
+   ],
+   "expected_codes": [
+    "00",
+    "94"
+   ],
+   "expected_balance_delta_cents": {
+    "4111111111111111": -25000
+   },
+   "check_script": null,
+   "rationale": "Triage follow-up inside approved bounds: vary the retry gap to 30 s to find where the new switch stops detecting duplicates.",
+   "status": "approved",
+   "parent_case_id": "case_dup_250"
+  },
+  {
+   "id": "case_tri_59",
+   "run_id": "run_3f2a9c",
+   "title": "Duplicate $250.00 retried after 59 s",
+   "rule": "reject_duplicate",
+   "source": "triage",
+   "accounts": [
+    {
+     "pan": "4111111111111111",
+     "balance_cents": 100000
+    }
+   ],
+   "steps": [
+    {
+     "mti": "0200",
+     "pan": "4111111111111111",
+     "amount_cents": 25000,
+     "stan": "000706",
+     "at_offset_s": 0.0
+    },
+    {
+     "mti": "0200",
+     "pan": "4111111111111111",
+     "amount_cents": 25000,
+     "stan": "000706",
+     "at_offset_s": 59
+    }
+   ],
+   "expected_codes": [
+    "00",
+    "94"
+   ],
+   "expected_balance_delta_cents": {
+    "4111111111111111": -25000
+   },
+   "check_script": null,
+   "rationale": "Triage follow-up inside approved bounds: vary the retry gap to 59 s to find where the new switch stops detecting duplicates.",
+   "status": "approved",
+   "parent_case_id": "case_dup_250"
+  },
+  {
+   "id": "case_tri_61",
+   "run_id": "run_3f2a9c",
+   "title": "Duplicate $250.00 retried after 61 s",
+   "rule": "reject_duplicate",
+   "source": "triage",
+   "accounts": [
+    {
+     "pan": "4111111111111111",
+     "balance_cents": 100000
+    }
+   ],
+   "steps": [
+    {
+     "mti": "0200",
+     "pan": "4111111111111111",
+     "amount_cents": 25000,
+     "stan": "000707",
+     "at_offset_s": 0.0
+    },
+    {
+     "mti": "0200",
+     "pan": "4111111111111111",
+     "amount_cents": 25000,
+     "stan": "000707",
+     "at_offset_s": 61
+    }
+   ],
+   "expected_codes": [
+    "00",
+    "00"
+   ],
+   "expected_balance_delta_cents": {
+    "4111111111111111": -50000
+   },
+   "check_script": null,
+   "rationale": "Triage follow-up inside approved bounds: vary the retry gap to 61 s to find where the new switch stops detecting duplicates.",
+   "status": "approved",
+   "parent_case_id": "case_dup_250"
+  }
+ ],
+ "counts": {
+  "total": 2012,
+  "passed": 1968,
+  "regression": 41,
+  "both_wrong": 0,
+  "noise": 0,
+  "error": 3
+ },
+ "sandboxes_used": 8,
+ "proofs": [
+  {
+   "sandbox_id": "sbx-3f2a00",
+   "runtime": "runsc",
+   "hostname": "sp-3f2a",
+   "uname": "Linux sp-3f2a 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+   "network": "none",
+   "readonly_rootfs": true
+  },
+  {
+   "sandbox_id": "sbx-81c001",
+   "runtime": "runsc",
+   "hostname": "sp-81c0",
+   "uname": "Linux sp-81c0 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+   "network": "none",
+   "readonly_rootfs": true
+  },
+  {
+   "sandbox_id": "sbx-5d1702",
+   "runtime": "runsc",
+   "hostname": "sp-5d17",
+   "uname": "Linux sp-5d17 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+   "network": "none",
+   "readonly_rootfs": true
+  },
+  {
+   "sandbox_id": "sbx-c94e03",
+   "runtime": "runsc",
+   "hostname": "sp-c94e",
+   "uname": "Linux sp-c94e 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+   "network": "none",
+   "readonly_rootfs": true
+  },
+  {
+   "sandbox_id": "sbx-0b6a04",
+   "runtime": "runsc",
+   "hostname": "sp-0b6a",
+   "uname": "Linux sp-0b6a 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+   "network": "none",
+   "readonly_rootfs": true
+  },
+  {
+   "sandbox_id": "sbx-e27305",
+   "runtime": "runsc",
+   "hostname": "sp-e273",
+   "uname": "Linux sp-e273 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+   "network": "none",
+   "readonly_rootfs": true
+  },
+  {
+   "sandbox_id": "sbx-49fd06",
+   "runtime": "runsc",
+   "hostname": "sp-49fd",
+   "uname": "Linux sp-49fd 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+   "network": "none",
+   "readonly_rootfs": true
+  },
+  {
+   "sandbox_id": "sbx-a1c807",
+   "runtime": "runsc",
+   "hostname": "sp-a1c8",
+   "uname": "Linux sp-a1c8 4.4.0 #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64",
+   "network": "none",
+   "readonly_rootfs": true
+  }
+ ],
+ "triage": {
+  "summary_md": "## Duplicate purchases are charged twice on NewSwitch v1\n\n**Severity:** critical · **Rule:** Reject a duplicate purchase (same card, STAN and amount within 60 seconds)\n\nThe new switch approves a retried purchase that the legacy switch rejects with **94 Duplicate transmission**.\nBoth legacy copies (Old A and Old B) agree, so this is not noise.\n\n| Retry gap | Old A | Old B | New |\n|---|---|---|---|\n| 0 s | 94 | 94 | 94 |\n| 0.5 s | 94 | 94 | 94 |\n| 1 s | 94 | 94 | **00** |\n| 5 s | 94 | 94 | **00** |\n| 59 s | 94 | 94 | **00** |\n| 61 s | 00 | 00 | 00 |\n\n### Boundary\n- Retries **1 second or more** apart are approved and debited a second time.\n- Retries inside the same second are still caught.\n- After 60 seconds both switches agree (new purchase).\n\n### Root-cause hypothesis\nThe 60-second duplicate window appears to be read as **60 milliseconds** (`dup_window` unit mismatch).\n\n### Money at risk\nIn the 2,000 replayed transactions, 41 regressions totaling `$6,874.12` would have been double-charged.\n\n_Data is IBM TabFormer (public synthetic benchmark). The defect was seeded for this demo._\n",
+  "severity": "critical",
+  "affected_rule": "Reject a duplicate purchase (same card, STAN and amount within 60 seconds)",
+  "root_cause_hypothesis": "Duplicate window of 60 is interpreted as milliseconds, so retries 1 s or more apart are treated as new purchases.",
+  "followup_case_ids": [
+   "case_tri_0",
+   "case_tri_0p5",
+   "case_tri_1",
+   "case_tri_2",
+   "case_tri_5",
+   "case_tri_30",
+   "case_tri_59",
+   "case_tri_61"
+  ],
+  "money_at_risk_cents": 687412
+ },
+ "github": {
+  "issue_url": "https://github.com/switchproof-demo/switchproof/issues/12",
+  "status_state": "pending"
+ },
+ "decision": null,
+ "rl": {
+  "status": "idle"
+ }
+}

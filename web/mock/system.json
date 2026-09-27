@@ -1,0 +1,19 @@
+{
+ "control_plane": {
+  "hostname": "sp-control",
+  "uname": "Linux sp-control 6.8.0-45-generic #45-Ubuntu SMP x86_64"
+ },
+ "sandbox_host": {
+  "kvm": true,
+  "runsc": true,
+  "mode": "gvisor",
+  "active_sandboxes": 0,
+  "hostname": "sp-sandbox",
+  "uname": "Linux sp-sandbox 6.8.0-45-generic #45-Ubuntu SMP x86_64"
+ },
+ "llm": {
+  "base_url": "https://api.vultrinference.com/v1",
+  "model": "Qwen/Qwen2.5-32B-Instruct",
+  "reachable": true
+ }
+}
