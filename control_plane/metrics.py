@@ -1,6 +1,7 @@
 """Evaluation metrics for a run: did we catch the defect, how well did the AI do, what did it cost, how did sandboxes behave.
 Everything is computed from stored results and events (no extra bookkeeping)."""
 from __future__ import annotations
+import math
 from collections import defaultdict
 from datetime import datetime
 
@@ -19,7 +20,7 @@ def _pct(a: int, b: int) -> float | None:
 
 
 def _p95(xs: list[int]) -> int | None:
-    return sorted(xs)[max(0, int(len(xs) * 0.95) - 1)] if xs else None
+    return sorted(xs)[max(0, math.ceil(len(xs) * 0.95) - 1)] if xs else None   # nearest-rank p95
 
 
 def run_metrics(run_id: str) -> dict:
