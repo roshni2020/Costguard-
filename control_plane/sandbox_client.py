@@ -76,12 +76,16 @@ def _fake_batch(req: BatchRequest) -> BatchResult:
                        started_at=started, finished_at=datetime.now(timezone.utc).isoformat(), destroyed=True)
 
 
-async def run_batch(req: BatchRequest) -> BatchResult:
+async def run_batch(req: BatchRequest, pool: str = "agent") -> BatchResult:
     if fake():
         return await asyncio.to_thread(_fake_batch, req)
     if k8s.enabled():
-        out, _, destroyed = await k8s.run(["-m", "switchcore.runner"], req.model_dump_json(), req.timeout_s)
+        out, _, destroyed = await k8s.run(["-m", "switchcore.runner"], req.model_dump_json(), req.timeout_s, pool)
         return BatchResult.model_validate({**out, "destroyed": destroyed})
+    data_host = os.environ.get("SANDBOX_HOST_URL_DATA")
+    if pool == "data" and data_host:              # VM mode: dataset replay on its own sandbox VM
+        return BatchResult.model_validate(await _call("POST", "/batch", req.model_dump_json(), timeout=req.timeout_s + 60,
+                                                      host=data_host.rstrip("/")))
     hosts = urls()
     host = hosts[next(_next) % len(hosts)]              # round-robin: scale out by adding sandbox VMs
     return BatchResult.model_validate(await _call("POST", "/batch", req.model_dump_json(), timeout=req.timeout_s + 60, host=host))

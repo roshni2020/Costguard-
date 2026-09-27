@@ -24,8 +24,16 @@ def enabled() -> bool:
     return os.environ.get("SANDBOX_BACKEND") == "k8s"
 
 
-def ns() -> str:
-    return os.environ.get("K8S_NAMESPACE", "switchproof-sandbox")
+POOLS = ("agent", "data")   # agent: LLM/human/triage tests (may carry agent code) | data: dataset replay, never agent code
+
+
+def ns(pool: str = "agent") -> str:
+    return os.environ.get(f"K8S_NAMESPACE_{pool.upper()}", f"switchproof-{pool}")
+
+
+def node_pool(pool: str) -> str | None:
+    """VKE node pool (= separate Vultr VMs) for this sandbox pool, e.g. K8S_NODEPOOL_DATA=data-pool."""
+    return os.environ.get(f"K8S_NODEPOOL_{pool.upper()}") or None
 
 
 def _client(timeout: float = 30) -> httpx.AsyncClient:
@@ -40,7 +48,7 @@ async def _ok(r: httpx.Response) -> dict:
     return r.json() if r.headers.get("content-type", "").startswith("application/json") else {"text": r.text}
 
 
-def job_manifest(name: str, argv: list[str], timeout_s: int) -> dict:
+def job_manifest(name: str, argv: list[str], timeout_s: int, pool: str = "agent") -> dict:
     rc = os.environ.get("K8S_RUNTIME_CLASS", "gvisor")
     pod = {
         "restartPolicy": "Never",
@@ -51,7 +59,8 @@ def job_manifest(name: str, argv: list[str], timeout_s: int) -> dict:
             "name": "runner", "image": os.environ.get("RUNNER_IMAGE", "switchproof-runner:latest"),
             "command": ["python", *argv],
             "env": [{"name": "SANDBOX_ID", "value": name}, {"name": "SANDBOX_RUNTIME", "value": "runsc" if rc == "gvisor" else "none"},
-                    {"name": "CONTROL_PLANE_ADDR", "value": os.environ.get("CONTROL_PLANE_ADDR", "10.0.0.1:8000")}],
+                    {"name": "CONTROL_PLANE_ADDR", "value": os.environ.get("CONTROL_PLANE_ADDR", "10.0.0.1:8000")},
+                    {"name": "SANDBOX_POOL", "value": pool}],
             "securityContext": {"readOnlyRootFilesystem": True, "allowPrivilegeEscalation": False,
                                 "capabilities": {"drop": ["ALL"]}},
             "resources": {"limits": {"cpu": "1", "memory": "512Mi"}, "requests": {"cpu": "250m", "memory": "256Mi"}},
@@ -62,24 +71,27 @@ def job_manifest(name: str, argv: list[str], timeout_s: int) -> dict:
     }
     if rc:
         pod["runtimeClassName"] = rc
+    if node_pool(pool):
+        pod["nodeSelector"] = {"vke.vultr.com/node-pool": node_pool(pool)}
     if os.environ.get("RUNNER_PULL_SECRET"):                # private Vultr Container Registry
         pod["imagePullSecrets"] = [{"name": os.environ["RUNNER_PULL_SECRET"]}]
-    labels = {"app.kubernetes.io/part-of": "switchproof-sandbox", "switchproof/sandbox": name}
+    labels = {"app.kubernetes.io/part-of": "switchproof-sandbox", "switchproof/sandbox": name, "switchproof/pool": pool}
     return {"apiVersion": "batch/v1", "kind": "Job", "metadata": {"name": name, "labels": labels},
             "spec": {"backoffLimit": 0, "activeDeadlineSeconds": timeout_s, "ttlSecondsAfterFinished": 300,
                      "template": {"metadata": {"labels": labels}, "spec": pod}}}
 
 
-async def run(argv: list[str], stdin: str, timeout_s: int) -> tuple[dict, str, bool]:
-    """Runs `python <argv> /input/input.json` in a fresh gVisor pod. Returns (last stdout JSON line, sandbox id, destroyed)."""
-    name = f"sp-{uuid.uuid4().hex[:10]}"
-    base = f"/api/v1/namespaces/{ns()}"
-    jobs = f"/apis/batch/v1/namespaces/{ns()}/jobs"
+async def run(argv: list[str], stdin: str, timeout_s: int, pool: str = "agent") -> tuple[dict, str, bool]:
+    """Runs `python <argv> /input/input.json` in a fresh gVisor pod of `pool`. Returns (last stdout JSON line, sandbox id, destroyed)."""
+    assert pool in POOLS
+    name = f"sp-{pool}-{uuid.uuid4().hex[:8]}"
+    base = f"/api/v1/namespaces/{ns(pool)}"
+    jobs = f"/apis/batch/v1/namespaces/{ns(pool)}/jobs"
     async with SEM, _client(timeout_s + 60) as c:
         await _ok(await c.post(f"{base}/configmaps", json={"apiVersion": "v1", "kind": "ConfigMap", "metadata": {
             "name": name, "labels": {"app.kubernetes.io/part-of": "switchproof-sandbox"}}, "data": {"input.json": stdin}}))
         try:
-            await _ok(await c.post(jobs, json=job_manifest(name, [*argv, "/input/input.json"], timeout_s)))
+            await _ok(await c.post(jobs, json=job_manifest(name, [*argv, "/input/input.json"], timeout_s, pool)))
             deadline = time.monotonic() + timeout_s + 30
             while True:
                 st = (await _ok(await c.get(f"{jobs}/{name}"))).get("status", {})
@@ -95,15 +107,15 @@ async def run(argv: list[str], stdin: str, timeout_s: int) -> tuple[dict, str, b
             lines = [l for l in log.splitlines() if l.strip().startswith("{")]
             if st.get("failed") or not lines:
                 raise RuntimeError(f"sandbox {name} failed: {log[-800:]}")
-            return json.loads(lines[-1]), name, await _destroy(c, name)
+            return json.loads(lines[-1]), name, await _destroy(c, name, pool)
         except BaseException:
-            await _destroy(c, name)
+            await _destroy(c, name, pool)
             raise
 
 
-async def _destroy(c: httpx.AsyncClient, name: str) -> bool:
-    base = f"/api/v1/namespaces/{ns()}"
-    await c.request("DELETE", f"/apis/batch/v1/namespaces/{ns()}/jobs/{name}", json={"propagationPolicy": "Foreground"})
+async def _destroy(c: httpx.AsyncClient, name: str, pool: str) -> bool:
+    base = f"/api/v1/namespaces/{ns(pool)}"
+    await c.request("DELETE", f"/apis/batch/v1/namespaces/{ns(pool)}/jobs/{name}", json={"propagationPolicy": "Foreground"})
     await c.delete(f"{base}/configmaps/{name}")
     for _ in range(30):                                     # destroyed = no pod left for this sandbox
         r = await c.get(f"{base}/pods", params={"labelSelector": f"switchproof/sandbox={name}"})
@@ -116,7 +128,8 @@ async def _destroy(c: httpx.AsyncClient, name: str) -> bool:
 async def health() -> dict:
     try:
         async with _client(10) as c:
-            active = (await _ok(await c.get(f"/apis/batch/v1/namespaces/{ns()}/jobs", params={"labelSelector": LABEL}))).get("items", [])
+            active = [j for pool in POOLS for j in (await _ok(await c.get(f"/apis/batch/v1/namespaces/{ns(pool)}/jobs",
+                                                                        params={"labelSelector": LABEL}))).get("items", [])]
             rc_name = os.environ.get("K8S_RUNTIME_CLASS", "gvisor")
             rc = await c.get(f"/apis/node.k8s.io/v1/runtimeclasses/{rc_name}") if rc_name else None
             nodes = await c.get("/api/v1/nodes")
@@ -128,7 +141,9 @@ async def health() -> dict:
                   "runtime": n.get("status", {}).get("nodeInfo", {}).get("containerRuntimeVersion"),
                   "cpu": n.get("status", {}).get("capacity", {}).get("cpu"), "memory": n.get("status", {}).get("capacity", {}).get("memory")}
                  for n in (nodes.json().get("items", []) if nodes.status_code == 200 else [])]
-    return {"mode": "kubernetes", "cluster_api": os.environ.get("K8S_API"), "namespace": ns(), "image": os.environ.get("RUNNER_IMAGE"),
+    return {"mode": "kubernetes", "cluster_api": os.environ.get("K8S_API"), "namespace": ns("agent"),
+            "pools": {pool: {"namespace": ns(pool), "node_pool": node_pool(pool)} for pool in POOLS},
+            "image": os.environ.get("RUNNER_IMAGE"),
             "runtime_class": rc_name or None, "runsc": bool(rc is not None and rc.status_code == 200),
             "kvm": None, "active_sandboxes": sum(1 for j in active if not (j.get("status", {}).get("succeeded") or j.get("status", {}).get("failed"))),
             "nodes": node_list, "hostname": f"VKE · {len(node_list)} node(s)", "uname": ", ".join(filter(None, (n["runtime"] for n in node_list[:1])))}

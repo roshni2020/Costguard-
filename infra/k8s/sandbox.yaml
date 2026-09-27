@@ -1,5 +1,8 @@
-# SwitchProof sandbox namespace on Vultr Kubernetes Engine.
-# Every test batch = one Job here, under gVisor, with no network, no credentials, read-only root, then deleted.
+# SwitchProof sandboxes on Vultr Kubernetes Engine: TWO isolated pools.
+#   switchproof-agent : tests written by the agents (may carry agent-written check scripts)
+#   switchproof-data  : dataset replay only - never runs agent-written code
+# Each pool: own namespace, own node pool (separate Vultr VMs via nodeSelector), gVisor, no network,
+# restricted pod security, quota. Every batch = one Job, deleted afterwards.
 apiVersion: node.k8s.io/v1
 kind: RuntimeClass
 metadata:
@@ -9,7 +12,7 @@ handler: runsc                       # installed on every node by gvisor-install
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: switchproof-sandbox
+  name: switchproof-agent
   labels:
     # the API server itself rejects any pod here that is not fully hardened
     pod-security.kubernetes.io/enforce: restricted
@@ -20,7 +23,7 @@ apiVersion: v1
 kind: ResourceQuota
 metadata:
   name: sandbox-quota
-  namespace: switchproof-sandbox
+  namespace: switchproof-agent
 spec:
   hard:
     pods: "20"
@@ -33,24 +36,16 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: deny-all
-  namespace: switchproof-sandbox
+  namespace: switchproof-agent
 spec:
   podSelector: {}
   policyTypes: [Ingress, Egress]
----
-# The control plane's identity: can start/read/delete sandboxes in this namespace and nothing else.
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: dispatcher
-  namespace: switchproof-sandbox
-automountServiceAccountToken: false
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: dispatcher
-  namespace: switchproof-sandbox
+  namespace: switchproof-agent
 rules:
   - apiGroups: [""]
     resources: [configmaps]
@@ -69,15 +64,97 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: dispatcher
-  namespace: switchproof-sandbox
+  namespace: switchproof-agent
 subjects:
   - kind: ServiceAccount
     name: dispatcher
-    namespace: switchproof-sandbox
+    namespace: switchproof-agent
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: dispatcher
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: switchproof-data
+  labels:
+    # the API server itself rejects any pod here that is not fully hardened
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+---
+# Blast radius cap: even a runaway agent cannot use more than this.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: sandbox-quota
+  namespace: switchproof-data
+spec:
+  hard:
+    pods: "20"
+    limits.cpu: "16"
+    limits.memory: 12Gi
+    configmaps: "40"
+---
+# No network in or out for anything in this namespace (not even DNS).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all
+  namespace: switchproof-data
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dispatcher
+  namespace: switchproof-data
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [create, get, delete]
+  - apiGroups: ["batch"]
+    resources: [jobs]
+    verbs: [create, get, list, delete]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dispatcher
+  namespace: switchproof-data
+subjects:
+  - kind: ServiceAccount
+    name: dispatcher
+    namespace: switchproof-agent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: dispatcher
+---
+# The control plane's identity: can start/read/delete sandbox Jobs in the two pool namespaces and nothing else.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dispatcher
+  namespace: switchproof-agent
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dispatcher-token
+  namespace: switchproof-agent
+  annotations:
+    kubernetes.io/service-account.name: dispatcher
+type: kubernetes.io/service-account-token
 ---
 # Read-only cluster view for the Infrastructure page (node list, RuntimeClass present?).
 apiVersion: rbac.authorization.k8s.io/v1
@@ -99,17 +176,8 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: dispatcher
-    namespace: switchproof-sandbox
+    namespace: switchproof-agent
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: switchproof-dispatcher-view
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: dispatcher-token
-  namespace: switchproof-sandbox
-  annotations:
-    kubernetes.io/service-account.name: dispatcher
-type: kubernetes.io/service-account-token

@@ -24,12 +24,19 @@ def refresh_counts(run_id: str) -> Counts:
     return counts
 
 
-async def execute(run_id: str, cases: list[TestCase], loop_iter: int | None = None) -> list[CaseResult]:
-    """Run `cases` in sandboxes. Caller guarantees they are human-approved (or triage follow-ups inside bounds)."""
+async def execute(run_id: str, cases: list[TestCase], loop_iter: int | None = None, pool: str = "agent") -> list[CaseResult]:
+    """Run `cases` in sandboxes. Caller guarantees they are human-approved (or triage follow-ups inside bounds).
+    pool="agent": LLM/human/triage tests (may carry agent-written check scripts).
+    pool="data":  dataset replay only, on a separate namespace/node pool; agent-written code never goes there."""
+    if pool == "data":
+        if any(c.source != "dataset" for c in cases):
+            raise ValueError("the data sandbox only runs dataset replay cases")
+        cases = [c.model_copy(update={"check_script": None}) for c in cases]
     db.save_cases(cases)
     batches = [cases[i:i + BATCH] for i in range(0, len(cases), BATCH)]
     parallel = PER_HOST * max(1, len(sandbox_client.urls())) if not k8s.enabled() else int(os.environ.get("K8S_MAX_PARALLEL", "8"))
-    emit(run_id, "executor", "info", f"Dispatching {len(cases):,} cases in {len(batches)} sandbox batch(es), "
+    where = "DATA sandbox pool (replay data, no agent code)" if pool == "data" else "AGENT sandbox pool (agent-written tests)"
+    emit(run_id, "executor", "info", f"{where}: dispatching {len(cases):,} cases in {len(batches)} sandbox batch(es), "
          + (f"{parallel} gVisor pods in parallel on Vultr Kubernetes" if k8s.enabled() else f"{parallel} in parallel across {max(1, len(sandbox_client.urls()))} sandbox VM(s)"), loop_iter=loop_iter)
     sem = asyncio.Semaphore(parallel)
     all_results: list[CaseResult] = []
@@ -40,7 +47,7 @@ async def execute(run_id: str, cases: list[TestCase], loop_iter: int | None = No
         async with sem:
             for attempt in (1, 2):
                 try:
-                    res = await sandbox_client.run_batch(req)
+                    res = await sandbox_client.run_batch(req, pool)
                     break
                 except Exception as e:
                     emit(run_id, "executor", "warning", f"Batch {idx + 1} failed (attempt {attempt}): {str(e)[:300]}", loop_iter=loop_iter)

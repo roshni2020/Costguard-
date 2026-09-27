@@ -123,6 +123,8 @@ def _run_check_script(script: str, result: CaseResult) -> str:
     """Agent-written assertions. Executed ONLY inside the gVisor sandbox image."""
     if os.environ.get("SWITCHPROOF_IN_SANDBOX") != "1":
         return "skipped: not in sandbox"
+    if os.environ.get("SANDBOX_POOL") == "data":
+        return "refused: the data sandbox never runs agent-written code"
     ctx = json.dumps({"steps": [s.model_dump() for s in result.steps], "balance_delta_cents": result.balance_delta_cents})
     wrapped = "import json,sys\nresult=json.load(sys.stdin)\n" + script
     try:

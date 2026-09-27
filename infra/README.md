@@ -13,15 +13,16 @@ This is the step-by-step guide to putting SwitchProof on Vultr: what to create i
                           │ Kubernetes API (TLS)
                           ▼
    Vultr Kubernetes Engine (node pool: 2 × VX1)
-     namespace switchproof-sandbox: 1 Job per test batch
-     gVisor RuntimeClass · no network · read-only root · no credentials · deleted after the batch
+     agent-pool VM → namespace switchproof-agent: agent-written tests, 1 Job per batch
+     data-pool  VM → namespace switchproof-data : replay data only, never agent code
+     both: gVisor RuntimeClass · no network · read-only root · no credentials · deleted after the batch
      image pulled from Vultr Container Registry
 ```
 
 | Vultr product | What it does here | Rough cost |
 |---|---|---|
 | Compute (VX1 `vx1-g-2c-8g`) | `sp-control`: control plane, agents, UI | $0.06/h |
-| Kubernetes Engine | Sandbox cluster; nodes are VX1 (the control plane is included) | 2 nodes × $0.06/h |
+| Kubernetes Engine | Sandbox cluster: `agent-pool` + `data-pool`, 1 VX1 node each (the control plane is included) | 2 nodes × $0.06/h |
 | Serverless Inference | The LLM behind every agent (`laguna-s-2.1`, the cheapest model with tool calling) | ~$0.18 / 1M output tokens |
 | Container Registry | Stores the sandbox runner image | small |
 | Object Storage | Evidence bundle per run; hosts the public demo page | a few $/month, hourly |
@@ -45,7 +46,11 @@ Put everything in the **same region** (for example Atlanta).
 - **Nothing else.** No 80, 443, 8000. NetBird needs no inbound rule.
 - Attach it to `sp-control` (Linked Instances tab).
 
-**A4. Kubernetes cluster.** Kubernetes → *Add Cluster*: name `sp-sandboxes`, latest version, same region, VPC `sp-vpc`. One node pool: **2 × VX1 `vx1-g-2c-8g`** (turn on auto-scaler max 4 if offered). When it's *Running*, click **Download Configuration** to get the kubeconfig file (`vke-….yaml`).
+**A4. Kubernetes cluster.** Kubernetes → *Add Cluster*: name `sp-sandboxes`, latest version, same region, VPC `sp-vpc`. Create **two node pools**, each **1 × VX1 `vx1-g-2c-8g`** (auto-scaler max 3 if offered):
+- `agent-pool`: runs the tests the AI agents wrote
+- `data-pool`: runs the transaction replay data, and never any agent-written code
+
+Separate pools mean separate Vultr VMs. Even if agent code escaped its gVisor sandbox, it would be on a different machine from the data. When the cluster is *Running*, click **Download Configuration** to get the kubeconfig file (`vke-….yaml`).
 
 **A5. Container Registry.** Container Registry → *Add*, name `switchproof`, same region. Note the **registry URL** (like `sjc.vultrcr.com/switchproof`), **username** and **password/API key**.
 
@@ -96,13 +101,14 @@ sudo bash infra/setup_block_storage.sh
 ```bash
 sudo KUBECONFIG=/root/vke.yaml \
   RUNNER_IMAGE=<A5 registry URL>/switchproof-runner:latest \
+  AGENT_POOL=agent-pool DATA_POOL=data-pool \
   VCR_HOST=<registry host, e.g. sjc.vultrcr.com> VCR_USERNAME=<A5> VCR_PASSWORD=<A5> \
   bash infra/setup_vke.sh
 ```
 
 This script:
 1. installs gVisor on every node (`infra/k8s/gvisor-installer.yaml`);
-2. creates the locked sandbox namespace (`infra/k8s/sandbox.yaml`: RuntimeClass `gvisor`, *restricted* pod security, quota, deny-all NetworkPolicy, a dispatcher account that can only manage Jobs in that namespace);
+2. creates **two** locked sandbox namespaces, `switchproof-agent` and `switchproof-data` (`infra/k8s/sandbox.yaml`: RuntimeClass `gvisor`, *restricted* pod security, quota, deny-all NetworkPolicy, a dispatcher account that can only manage Jobs there), pinned to their own node pools;
 3. proves a pod really runs under gVisor (kernel `4.4.0` inside);
 4. hands the control plane a namespace-scoped token.
 

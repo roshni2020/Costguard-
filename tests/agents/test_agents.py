@@ -213,3 +213,29 @@ def test_kubernetes_backend_job_lifecycle(monkeypatch, tmp_path):
     assert spec["runtimeClassName"] == "gvisor" and spec["automountServiceAccountToken"] is False
     assert c0["readOnlyRootFilesystem"] and c0["capabilities"]["drop"] == ["ALL"] and not c0["allowPrivilegeEscalation"]
     assert res.proof.runtime == "local-unsafe", "not really gVisor here, so the proof must not claim runsc"
+
+
+def test_agent_and_data_sandboxes_are_separate(monkeypatch):
+    import pytest
+    from control_plane import k8s
+    from control_plane.agents import executor
+    from switchcore.dataset import load_replay_cases
+    from switchcore.engine import _run_check_script
+    from shared.schemas import CaseResult
+    # the data pool refuses anything that is not a dataset replay row
+    with pytest.raises(ValueError):
+        asyncio.run(executor.execute("run-t", [demo_duplicate_case("run-t")], pool="data"))
+    # each pool gets its own namespace and, when configured, its own node pool (= separate Vultr VMs)
+    monkeypatch.setenv("K8S_NODEPOOL_DATA", "data-pool")
+    data = k8s.job_manifest("sp-data-1", ["-m", "switchcore.runner"], 60, "data")
+    agent = k8s.job_manifest("sp-agent-1", ["-m", "switchcore.runner"], 60, "agent")
+    assert data["spec"]["template"]["spec"]["nodeSelector"] == {"vke.vultr.com/node-pool": "data-pool"}
+    assert "nodeSelector" not in agent["spec"]["template"]["spec"]
+    assert k8s.ns("data") == "switchproof-data" and k8s.ns("agent") == "switchproof-agent"
+    env = {e["name"]: e["value"] for e in data["spec"]["template"]["spec"]["containers"][0]["env"]}
+    assert env["SANDBOX_POOL"] == "data"
+    # inside a data sandbox, agent-written code is refused even if it slipped through
+    monkeypatch.setenv("SWITCHPROOF_IN_SANDBOX", "1")
+    monkeypatch.setenv("SANDBOX_POOL", "data")
+    empty = CaseResult(case_id="x", verdict="pass", steps=[], balance_delta_cents={}, duration_ms=0)
+    assert _run_check_script("print('pwned')", empty).startswith("refused")

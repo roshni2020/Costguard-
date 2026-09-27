@@ -181,7 +181,7 @@ async def act(tool: str, run: Run, meta: dict, it: int) -> tuple[str, bool]:
                 emit(rid, "executor", "info", f"Loading {run.replay.sample_size:,} replay transactions from IBM TabFormer "
                      "(public synthetic benchmark) - expected codes come from the dataset, not the LLM.", loop_iter=it)
                 replay = await asyncio.to_thread(load_replay_cases, rid, run.replay.sample_size)
-                await executor.execute(rid, replay, it)
+                await executor.execute(rid, replay, it, pool="data")
             db.set_meta(rid, executed=True)
         else:
             await executor.execute(rid, pending_cases(run), it)
