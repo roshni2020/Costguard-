@@ -11,12 +11,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from control_plane import db, llm, objstore, sandbox_client
+from control_plane import db, llm, netbird, objstore, sandbox_client
 from control_plane.agents import coordinator, reporter
 from control_plane.events import agent_statuses, emit, now, say, set_state
 from shared import vultr
@@ -77,7 +77,7 @@ class CreateRun(BaseModel):
     replay: Optional[ReplayConfig] = None
 
 
-@app.post("/api/runs")
+@app.post("/api/runs", dependencies=[Depends(netbird.require_tester)])
 def create_run(body: CreateRun) -> Run:
     if not body.requirements:
         raise HTTPException(422, "at least one requirement is needed")
@@ -99,7 +99,7 @@ def read_run(run_id: str) -> Run:
     return get(run_id)
 
 
-@app.post("/api/runs/{run_id}/generate")
+@app.post("/api/runs/{run_id}/generate", dependencies=[Depends(netbird.require_tester)])
 async def generate(run_id: str):
     run = transition(run_id, ("draft",), "planning")
     say(run_id, "human", "coordinator", f"Test '{run.title}' against these {len(run.requirements)} rules.")
@@ -115,7 +115,7 @@ class CasePatch(BaseModel):
     expected_balance_delta_cents: Optional[dict[str, int]] = None
 
 
-@app.patch("/api/runs/{run_id}/cases/{case_id}")
+@app.patch("/api/runs/{run_id}/cases/{case_id}", dependencies=[Depends(netbird.require_tester)])
 def patch_case(run_id: str, case_id: str, body: CasePatch) -> TestCase:
     upd = body.model_dump(exclude_none=True)
     out: list[TestCase] = []
@@ -141,7 +141,7 @@ def patch_case(run_id: str, case_id: str, body: CasePatch) -> TestCase:
     return out[0]
 
 
-@app.post("/api/runs/{run_id}/cases")
+@app.post("/api/runs/{run_id}/cases", dependencies=[Depends(netbird.require_tester)])
 def add_case(run_id: str, body: dict) -> TestCase:
     run = get(run_id)
     try:
@@ -157,7 +157,7 @@ def add_case(run_id: str, body: dict) -> TestCase:
     return case
 
 
-@app.post("/api/runs/{run_id}/approve_all")
+@app.post("/api/runs/{run_id}/approve_all", dependencies=[Depends(netbird.require_tester)])
 def approve_all(run_id: str):
     n = [0]
 
@@ -172,7 +172,7 @@ def approve_all(run_id: str):
     return {"approved": n[0]}
 
 
-@app.patch("/api/runs/{run_id}/replay")
+@app.patch("/api/runs/{run_id}/replay", dependencies=[Depends(netbird.require_tester)])
 def set_replay(run_id: str, body: ReplayConfig) -> Run:
     if not 1 <= body.sample_size <= 20_000:
         raise HTTPException(422, "sample_size must be 1..20000")
@@ -181,7 +181,7 @@ def set_replay(run_id: str, body: ReplayConfig) -> Run:
     return run
 
 
-@app.post("/api/runs/{run_id}/execute")
+@app.post("/api/runs/{run_id}/execute", dependencies=[Depends(netbird.require_tester)])
 async def execute(run_id: str):
     def check(r: Run):
         waiting = [c.title for c in r.cases if c.status == "proposed"]
@@ -216,18 +216,45 @@ class DecisionIn(BaseModel):
 
 
 @app.post("/api/runs/{run_id}/decision")
-async def decision(run_id: str, body: DecisionIn) -> Run:
-    if not body.reviewer.strip():
+async def decision(run_id: str, body: DecisionIn, who: dict = Depends(netbird.require_tester)) -> Run:
+    reviewer = who["user"] or body.reviewer.strip()          # NetBird SSO identity beats a typed name
+    if not reviewer:
         raise HTTPException(422, "reviewer name is required")
-    d = Decision(decision=body.decision, reviewer=body.reviewer.strip(), note=body.note, ts=now())
+    note = body.note + (" (authenticated by NetBird SSO)" if who["user"] else "")
+    d = Decision(decision=body.decision, reviewer=reviewer, note=note.strip(), ts=now())
 
     def fn(r: Run):
         r.decision = d
     run = transition(run_id, ("awaiting_decision",), "blocked" if d.decision == "block" else "approved_for_release", fn)
     verb = "blocked the migration" if d.decision == "block" else "approved the release"
     emit(run_id, "human", "decision", f"{d.reviewer} {verb}" + (f": {d.note}" if d.note else ""), d.model_dump(), to_agent="coordinator")
+    await netbird.close_share(run_id, f"decision recorded: {d.decision}")
     coordinator.launch(run_id)
     return run
+
+
+@app.get("/api/me")
+def whoami(request: Request):
+    return netbird.me(request)
+
+
+@app.get("/api/runs/{run_id}/share")
+def get_share(run_id: str, request: Request):
+    get(run_id)
+    return netbird.share(run_id, show_pin=netbird.me(request)["can_act"])
+
+
+@app.post("/api/runs/{run_id}/share", dependencies=[Depends(netbird.require_tester)])
+async def open_share(run_id: str):
+    if get(run_id).status != "awaiting_decision":
+        raise HTTPException(409, "review links exist only while a run is awaiting its decision")
+    return await netbird.open_share(run_id)
+
+
+@app.delete("/api/runs/{run_id}/share", dependencies=[Depends(netbird.require_tester)])
+async def close_share(run_id: str):
+    await netbird.close_share(run_id, "closed by tester")
+    return {"active": False}
 
 
 async def _rl_job(run_id: str, args: dict):
@@ -251,7 +278,7 @@ async def _rl_job(run_id: str, args: dict):
         set_state(run_id, "rl", "error")
 
 
-@app.post("/api/runs/{run_id}/rl")
+@app.post("/api/runs/{run_id}/rl", dependencies=[Depends(netbird.require_tester)])
 async def start_rl(run_id: str, body: Optional[dict] = None):
     if get(run_id).rl.status == "running":
         raise HTTPException(409, "RL explorer is already running")
@@ -275,7 +302,7 @@ def agents(run_id: str):
     return agent_statuses(run_id)
 
 
-@app.post("/api/runs/{run_id}/retry")
+@app.post("/api/runs/{run_id}/retry", dependencies=[Depends(netbird.require_tester)])
 async def retry(run_id: str):
     run = get(run_id)
     if not coordinator.options(run, db.get_meta(run_id)):
@@ -294,13 +321,13 @@ def export(run_id: str):
 async def system():
     return {"control_plane": {"hostname": socket.gethostname(), "uname": " ".join(x for x in platform.uname() if x),
                               "vultr": vultr.metadata(), "storage": vultr.storage(os.path.dirname(db.DB_PATH))},
-            "object_storage": objstore.info(),
+            "object_storage": objstore.info(), "netbird": await asyncio.to_thread(netbird.status),
             "sandbox_host": await sandbox_client.health(),
             "llm": {"base_url": llm.base_url(), "model": llm.model_for("coordinator"), "offline": llm.offline(),
                     "reachable": bool(llm.reachable), "models": llm.available_models[:30]}}
 
 
-@app.post("/api/system/probe")
+@app.post("/api/system/probe", dependencies=[Depends(netbird.require_tester)])
 async def probe():
     try:
         return await sandbox_client.probe()

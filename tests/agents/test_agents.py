@@ -131,3 +131,34 @@ def test_evidence_archived_to_vultr_object_storage(monkeypatch):
     assert url.endswith("/switchproof/site-test/index.html?snapshot=export.json")
     assert any(u.endswith("/site-test/app.js") and h["content-type"].startswith("text/javascript") for _, u, h in puts)
     assert not any("/mock/" in u for _, u, _ in puts)
+
+
+def test_netbird_roles_gate_mutations(monkeypatch):
+    monkeypatch.setenv("AUTH_MODE", "netbird")
+    tester = {"X-NetBird-User": "roshni@example.com", "X-NetBird-Groups": "All,testers"}
+    viewer = {"X-NetBird-Groups": "All"}                       # PIN user: no tester group
+    with TestClient(app) as c:
+        assert c.get("/api/me", headers=viewer).json() == {"auth": "netbird", "user": None, "groups": ["All"], "role": "viewer", "can_act": False}
+        r = c.post("/api/runs", json=DEMO, headers=viewer)
+        assert r.status_code == 403 and "read-only" in r.json()["detail"]
+        rid = c.post("/api/runs", json=DEMO, headers=tester).json()["id"]
+        assert c.get(f"/api/runs/{rid}", headers=viewer).status_code == 200          # viewers can still read
+        assert c.post(f"/api/runs/{rid}/share", headers=tester).status_code == 409   # only while awaiting decision
+        assert c.get(f"/api/runs/{rid}/share", headers=viewer).json() == {"active": False}
+        db.mutate_run(rid, lambda r: setattr(r, "status", "awaiting_decision"))
+        d = c.post(f"/api/runs/{rid}/decision", json={"decision": "block", "reviewer": "someone else", "note": "dup"}, headers=tester).json()
+        assert d["decision"]["reviewer"] == "roshni@example.com" and "NetBird SSO" in d["decision"]["note"]
+        assert c.get("/api/system").json()["netbird"]["available"] in (True, False)
+
+
+def test_netbird_status_parsing(monkeypatch):
+    from control_plane import netbird
+    fake = {"netbirdIp": "100.92.1.2/16", "fqdn": "sp-control.netbird.cloud", "peers": {"details": [
+        {"fqdn": "sp-sandbox.netbird.cloud", "netbirdIp": "100.92.1.3", "status": "Connected", "connectionType": "P2P", "latency": 1234567}]}}
+    monkeypatch.setattr(netbird, "_raw_status", lambda: fake)
+    monkeypatch.setattr(netbird, "_cache", (0.0, {}))
+    monkeypatch.setenv("SANDBOX_HOST_URL", "http://100.92.1.3:9000")
+    s = netbird.status()
+    assert s["ip"] == "100.92.1.2" and s["sandbox_via_netbird"] is True
+    assert s["peers"][0] == {"fqdn": "sp-sandbox.netbird.cloud", "ip": "100.92.1.3", "status": "Connected", "connection_type": "P2P", "latency_ms": 1.23}
+    assert netbird._ms("850µs") == 0.85 and netbird._ms("2.5ms") == 2.5
