@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from control_plane import db, llm, netbird, objstore, sandbox_client
+from control_plane import db, llm, metrics, netbird, objstore, sandbox_client
 from control_plane.agents import coordinator, reporter
 from control_plane.events import agent_statuses, emit, now, say, set_state
 from shared import vultr
@@ -231,6 +231,17 @@ async def decision(run_id: str, body: DecisionIn, who: dict = Depends(netbird.re
     await netbird.close_share(run_id, f"decision recorded: {d.decision}")
     coordinator.launch(run_id)
     return run
+
+
+@app.get("/api/runs/{run_id}/metrics")
+def run_metrics(run_id: str):
+    get(run_id)
+    return metrics.run_metrics(run_id)
+
+
+@app.get("/api/metrics")
+def all_metrics():
+    return metrics.all_runs()
 
 
 @app.get("/api/me")

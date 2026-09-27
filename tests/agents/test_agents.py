@@ -279,3 +279,15 @@ def test_kubernetes_output_chunks_survive_log_line_limits():
     assert parse_output(log) == big
     assert parse_output("SPCHUNK {\"a\"") is None, "incomplete output must not be parsed"
     assert parse_output('noise\n{"ok": 1}\n') == '{"ok": 1}'
+
+
+def test_metrics_endpoint_after_a_full_run():
+    run = demo_main(replay=100)
+    with TestClient(app) as c:
+        m = c.get(f"/api/runs/{run['id']}/metrics").json()
+        rows = c.get("/api/metrics").json()
+    assert m["detection"]["defect_caught"] is True and "1 s or more" in m["detection"]["boundary"]
+    assert m["coverage"]["rules_with_cases"] == m["coverage"]["rules_planned"] == 4
+    assert m["ai_quality"]["proposed"] == 12 and m["ai_quality"]["expectation_correct_pct"] == 100.0
+    assert m["sandboxes"]["count"] >= 2 and m["counts"]["total"] == sum(r["cases"] for r in m["coverage"]["per_rule"].values())
+    assert any(r["run_id"] == run["id"] for r in rows)

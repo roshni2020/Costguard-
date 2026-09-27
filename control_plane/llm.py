@@ -15,6 +15,7 @@ log = logging.getLogger("switchproof.llm")
 T = TypeVar("T", bound=BaseModel)
 reachable: bool | None = None          # set by check_models() at startup
 available_models: list[str] = []
+prices: dict[str, float] = {}          # model id -> USD per 1M completion tokens (from Vultr's /v1/models)
 
 
 def offline() -> bool:
@@ -48,6 +49,11 @@ async def check_models() -> None:
                     body = r.json()
                     items = body.get("data", body) if isinstance(body, dict) else body
                     available_models = [m.get("id", str(m)) if isinstance(m, dict) else str(m) for m in items]
+                    for m in items:
+                        for out in (m.get("output_modalities") or []) if isinstance(m, dict) else []:
+                            for pr in out.get("pricing") or []:
+                                if pr.get("type") == "completion":
+                                    prices[m["id"]] = float(pr["cost_usd"]) * 1e6
                     reachable = True
                     log.info("Vultr inference models: %s", available_models)
                     for agent in ("coordinator", "generator", "triage", "planner", "reporter"):
