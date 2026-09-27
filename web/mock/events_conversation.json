@@ -1,0 +1,439 @@
+[
+ {
+  "ts": "2026-09-27T16:02:13Z",
+  "agent": "human",
+  "kind": "message",
+  "message": "Generate tests for these 4 rules",
+  "data": {
+   "phase": "plan"
+  },
+  "to_agent": "coordinator",
+  "seq": 2
+ },
+ {
+  "ts": "2026-09-27T16:02:14Z",
+  "agent": "coordinator",
+  "kind": "llm_call",
+  "message": "Decide next step",
+  "data": {
+   "prompt": "You are the SwitchProof coordinator. Tools: plan_rules, generate_tests, request_human_approval, execute_tests, generate_followups, triage_findings, file_report, request_human_decision, finish.\nState: status=planning, rules=4, cases=0.\nWhich tool next?",
+   "reply": "{\"tool\": \"plan_rules\", \"args\": {\"rules\": 4}}",
+   "phase": "plan"
+  },
+  "loop_iter": 1,
+  "model": "Qwen/Qwen2.5-32B-Instruct",
+  "tokens_in": 812,
+  "tokens_out": 41,
+  "latency_ms": 1240,
+  "seq": 3
+ },
+ {
+  "ts": "2026-09-27T16:02:15Z",
+  "agent": "coordinator",
+  "kind": "tool_call",
+  "message": "plan_rules(rules=4)",
+  "data": {
+   "args": {
+    "rules": 4
+   },
+   "phase": "plan"
+  },
+  "to_agent": "planner",
+  "loop_iter": 1,
+  "tool": "plan_rules",
+  "seq": 4
+ },
+ {
+  "ts": "2026-09-27T16:02:16Z",
+  "agent": "planner",
+  "kind": "llm_call",
+  "message": "Extract states per rule",
+  "data": {
+   "prompt": "Rules:\n1. Approve a purchase when funds are available\n2. Decline a purchase for insufficient funds\n3. Reject a duplicate purchase (same card, STAN and amount within 60 seconds)\n4. Reverse an approved payment and restore the balance\nLegacy check order: ...\nList the states worth testing for each rule as JSON.",
+   "reply": "[{\"rule\": \"reject_duplicate\", \"states\": [\"retry at +5 s\", \"same STAN, different amount\", \"retry at +61 s\"]}, ...]",
+   "phase": "plan"
+  },
+  "loop_iter": 1,
+  "model": "Qwen/Qwen2.5-32B-Instruct",
+  "tokens_in": 1406,
+  "tokens_out": 388,
+  "latency_ms": 3920,
+  "seq": 5
+ },
+ {
+  "ts": "2026-09-27T16:02:20Z",
+  "agent": "planner",
+  "kind": "tool_result",
+  "message": "10 states across 4 rules",
+  "data": {
+   "phase": "plan"
+  },
+  "to_agent": "coordinator",
+  "loop_iter": 1,
+  "tool": "plan_rules",
+  "seq": 8
+ },
+ {
+  "ts": "2026-09-27T16:02:21Z",
+  "agent": "coordinator",
+  "kind": "llm_call",
+  "message": "Decide next step",
+  "data": {
+   "prompt": "State: plan has 10 states, cases=0. Which tool next?",
+   "reply": "{\"tool\": \"generate_tests\", \"args\": {\"per_state\": 1}}",
+   "phase": "plan"
+  },
+  "loop_iter": 2,
+  "model": "Qwen/Qwen2.5-32B-Instruct",
+  "tokens_in": 1022,
+  "tokens_out": 38,
+  "latency_ms": 1110,
+  "seq": 9
+ },
+ {
+  "ts": "2026-09-27T16:02:22Z",
+  "agent": "coordinator",
+  "kind": "tool_call",
+  "message": "generate_tests(per_state=1)",
+  "data": {
+   "args": {
+    "per_state": 1
+   },
+   "phase": "plan"
+  },
+  "to_agent": "generator",
+  "loop_iter": 2,
+  "tool": "generate_tests",
+  "seq": 10
+ },
+ {
+  "ts": "2026-09-27T16:02:23Z",
+  "agent": "generator",
+  "kind": "llm_call",
+  "message": "Write ISO 8583 test cases",
+  "data": {
+   "prompt": "For each state write a TestCase JSON: accounts, steps (mti, card number, amount_cents, stan, at_offset_s), expected_codes, expected_balance_delta_cents, rationale. Stay within max_amount_cents=100000.",
+   "reply": "[{\"title\": \"Duplicate $250.00 purchase retried after 5 seconds\", \"rule\": \"reject_duplicate\", \"steps\": [{\"mti\": \"0200\", \"amount_cents\": 25000, \"stan\": \"000123\", \"at_offset_s\": 0}, {\"mti\": \"0200\", \"amount_cents\": 25000, \"stan\": \"000123\", \"at_offset_s\": 5}], \"expected_codes\": [\"00\", \"94\"]}, ...]",
+   "phase": "plan"
+  },
+  "loop_iter": 2,
+  "model": "Qwen/Qwen2.5-32B-Instruct",
+  "tokens_in": 2310,
+  "tokens_out": 2874,
+  "latency_ms": 11840,
+  "seq": 11
+ },
+ {
+  "ts": "2026-09-27T16:02:35Z",
+  "agent": "generator",
+  "kind": "tool_result",
+  "message": "10 cases written, 0 rejected by schema check",
+  "data": {
+   "phase": "plan"
+  },
+  "to_agent": "coordinator",
+  "loop_iter": 2,
+  "tool": "generate_tests",
+  "seq": 14
+ },
+ {
+  "ts": "2026-09-27T16:02:36Z",
+  "agent": "coordinator",
+  "kind": "llm_call",
+  "message": "Decide next step",
+  "data": {
+   "prompt": "State: 10 proposed cases, 0 approved. Which tool next?",
+   "reply": "{\"tool\": \"request_human_approval\"}",
+   "phase": "plan"
+  },
+  "loop_iter": 3,
+  "model": "Qwen/Qwen2.5-32B-Instruct",
+  "tokens_in": 1180,
+  "tokens_out": 22,
+  "latency_ms": 980,
+  "seq": 15
+ },
+ {
+  "ts": "2026-09-27T16:02:37Z",
+  "agent": "coordinator",
+  "kind": "tool_call",
+  "message": "request_human_approval(cases=10)",
+  "data": {
+   "phase": "plan"
+  },
+  "to_agent": "human",
+  "loop_iter": 3,
+  "tool": "request_human_approval",
+  "seq": 17
+ },
+ {
+  "ts": "2026-09-27T16:02:37Z",
+  "agent": "coordinator",
+  "kind": "message",
+  "message": "10 tests are ready for your review. Nothing runs until you approve.",
+  "data": {
+   "phase": "plan"
+  },
+  "to_agent": "human",
+  "loop_iter": 3,
+  "seq": 18
+ },
+ {
+  "ts": "2026-09-27T16:03:21Z",
+  "agent": "human",
+  "kind": "decision",
+  "message": "Approved 10 of 10 tests and enabled replay of 2,000 TabFormer transactions",
+  "data": {
+   "approved": 10,
+   "rejected": 0,
+   "phase": "run"
+  },
+  "to_agent": "coordinator",
+  "seq": 19
+ },
+ {
+  "ts": "2026-09-27T16:03:22Z",
+  "agent": "coordinator",
+  "kind": "tool_call",
+  "message": "execute_tests(cases=10, replay=2000)",
+  "data": {
+   "args": {
+    "cases": 10,
+    "replay": 2000
+   },
+   "phase": "run"
+  },
+  "to_agent": "executor",
+  "loop_iter": 4,
+  "tool": "execute_tests",
+  "seq": 20
+ },
+ {
+  "ts": "2026-09-27T16:05:22Z",
+  "agent": "executor",
+  "kind": "tool_result",
+  "message": "2,012 executed: 1,968 pass, 41 regression, 3 error",
+  "data": {
+   "phase": "run"
+  },
+  "to_agent": "coordinator",
+  "loop_iter": 4,
+  "tool": "execute_tests",
+  "seq": 51
+ },
+ {
+  "ts": "2026-09-27T16:05:23Z",
+  "agent": "coordinator",
+  "kind": "llm_call",
+  "message": "Decide next step",
+  "data": {
+   "prompt": "State: 41 regressions, top cluster reject_duplicate (41). auto_followups=true. Which tool next?",
+   "reply": "{\"tool\": \"generate_followups\", \"args\": {\"case_id\": \"case_dup_250\"}}",
+   "phase": "triage"
+  },
+  "loop_iter": 5,
+  "model": "Qwen/Qwen2.5-32B-Instruct",
+  "tokens_in": 1530,
+  "tokens_out": 44,
+  "latency_ms": 1310,
+  "seq": 52
+ },
+ {
+  "ts": "2026-09-27T16:05:24Z",
+  "agent": "coordinator",
+  "kind": "tool_call",
+  "message": "generate_followups(case_id=case_dup_250)",
+  "data": {
+   "args": {
+    "case_id": "case_dup_250"
+   },
+   "phase": "triage"
+  },
+  "to_agent": "triage",
+  "loop_iter": 5,
+  "tool": "generate_followups",
+  "seq": 53
+ },
+ {
+  "ts": "2026-09-27T16:05:25Z",
+  "agent": "triage",
+  "kind": "llm_call",
+  "message": "Propose follow-ups to find the boundary",
+  "data": {
+   "prompt": "Regression: duplicate $250.00 retried after 5 s. Old A 94, Old B 94, New 00. Bounds: max $1,000.00, MTI 0200. Propose follow-up cases that vary one variable to find the boundary.",
+   "reply": "Vary retry gap: [0, 0.5, 1, 2, 5, 30, 59, 61] seconds. Keep card, STAN, amount fixed.",
+   "phase": "triage"
+  },
+  "loop_iter": 5,
+  "model": "Qwen/Qwen2.5-32B-Instruct",
+  "tokens_in": 1904,
+  "tokens_out": 512,
+  "latency_ms": 4720,
+  "seq": 54
+ },
+ {
+  "ts": "2026-09-27T16:05:46Z",
+  "agent": "triage",
+  "kind": "tool_result",
+  "message": "Boundary: gap >= 1 s approved twice; 0-0.5 s caught; 61 s both approve",
+  "data": {
+   "phase": "triage"
+  },
+  "to_agent": "coordinator",
+  "loop_iter": 5,
+  "tool": "generate_followups",
+  "seq": 67
+ },
+ {
+  "ts": "2026-09-27T16:05:47Z",
+  "agent": "coordinator",
+  "kind": "tool_call",
+  "message": "file_report(severity=critical)",
+  "data": {
+   "phase": "triage"
+  },
+  "to_agent": "reporter",
+  "loop_iter": 6,
+  "tool": "file_report",
+  "seq": 68
+ },
+ {
+  "ts": "2026-09-27T16:05:48Z",
+  "agent": "reporter",
+  "kind": "message",
+  "message": "Report drafted from the triage findings (template, no LLM)",
+  "data": {
+   "phase": "triage"
+  },
+  "to_agent": "coordinator",
+  "loop_iter": 6,
+  "seq": 69
+ },
+ {
+  "ts": "2026-09-27T16:05:56Z",
+  "agent": "reporter",
+  "kind": "tool_result",
+  "message": "Issue #12 filed; commit status pending",
+  "data": {
+   "phase": "triage"
+  },
+  "to_agent": "coordinator",
+  "loop_iter": 6,
+  "tool": "file_report",
+  "seq": 71
+ },
+ {
+  "ts": "2026-09-27T16:05:57Z",
+  "agent": "coordinator",
+  "kind": "message",
+  "message": "Critical regression confirmed. Please decide: block the migration or approve release.",
+  "data": {
+   "phase": "triage"
+  },
+  "to_agent": "human",
+  "loop_iter": 6,
+  "seq": 73
+ },
+ {
+  "ts": "2026-09-27T16:02:17Z",
+  "agent": "planner",
+  "kind": "message",
+  "message": "Duplicate rule needs time offsets; I will include retries inside and outside 60 s",
+  "data": {
+   "phase": "plan"
+  },
+  "to_agent": "coordinator",
+  "loop_iter": 1,
+  "seq": 6
+ },
+ {
+  "ts": "2026-09-27T16:02:24Z",
+  "agent": "generator",
+  "kind": "message",
+  "message": "Using demo card ending 1111 with $1,000.00 for the duplicate cases",
+  "data": {
+   "phase": "plan"
+  },
+  "to_agent": "coordinator",
+  "loop_iter": 2,
+  "seq": 12
+ },
+ {
+  "ts": "2026-09-27T16:03:23Z",
+  "agent": "executor",
+  "kind": "message",
+  "message": "Starting gVisor sandboxes on sp-sandbox (network none, read-only root)",
+  "data": {
+   "phase": "run"
+  },
+  "to_agent": "coordinator",
+  "loop_iter": 4,
+  "seq": 22
+ },
+ {
+  "ts": "2026-09-27T16:03:32Z",
+  "agent": "executor",
+  "kind": "message",
+  "message": "First regression: case_dup_250, old 94 / new 00",
+  "data": {
+   "phase": "run"
+  },
+  "to_agent": "coordinator",
+  "loop_iter": 4,
+  "seq": 26
+ },
+ {
+  "ts": "2026-09-27T16:03:33Z",
+  "agent": "coordinator",
+  "kind": "message",
+  "message": "Noted. Finish the batch; triage runs after execution completes.",
+  "data": {
+   "phase": "run"
+  },
+  "to_agent": "executor",
+  "loop_iter": 4,
+  "seq": 27
+ },
+ {
+  "ts": "2026-09-27T16:05:30Z",
+  "agent": "triage",
+  "kind": "tool_call",
+  "message": "execute_tests(followups=8, within_bounds=true)",
+  "data": {
+   "args": {
+    "count": 8
+   },
+   "phase": "triage"
+  },
+  "to_agent": "executor",
+  "loop_iter": 5,
+  "tool": "execute_tests",
+  "seq": 55
+ },
+ {
+  "ts": "2026-09-27T16:05:44Z",
+  "agent": "executor",
+  "kind": "tool_result",
+  "message": "8 follow-ups executed in sandbox sbx-a1c807, destroyed",
+  "data": {
+   "phase": "triage"
+  },
+  "to_agent": "triage",
+  "loop_iter": 5,
+  "tool": "execute_tests",
+  "seq": 65
+ },
+ {
+  "ts": "2026-09-27T16:09:03Z",
+  "agent": "human",
+  "kind": "decision",
+  "message": "Blocked migration: duplicate retries are double-charged",
+  "data": {
+   "decision": "block",
+   "reviewer": "Roshni K.",
+   "phase": "decision"
+  },
+  "to_agent": "coordinator",
+  "seq": 74
+ }
+]

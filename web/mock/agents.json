@@ -1,0 +1,65 @@
+[
+ {
+  "name": "coordinator",
+  "role": "Runs the tool-calling loop and routes work",
+  "model": "Qwen/Qwen2.5-32B-Instruct",
+  "state": "waiting_human",
+  "last_message": "Critical regression confirmed. Please decide: block the migration or approve release.",
+  "llm_calls": 4,
+  "tokens": 4689
+ },
+ {
+  "name": "planner",
+  "role": "Turns rules into states worth testing",
+  "model": "Qwen/Qwen2.5-32B-Instruct",
+  "state": "done",
+  "last_message": "10 states across 4 rules",
+  "llm_calls": 1,
+  "tokens": 1794
+ },
+ {
+  "name": "generator",
+  "role": "Writes ISO 8583 test cases",
+  "model": "Qwen/Qwen2.5-32B-Instruct",
+  "state": "done",
+  "last_message": "10 cases written, 0 rejected by schema check",
+  "llm_calls": 1,
+  "tokens": 5184
+ },
+ {
+  "name": "executor",
+  "role": "Runs approved tests in gVisor sandboxes",
+  "model": null,
+  "state": "done",
+  "last_message": "2,012 executed: 1,968 pass, 41 regression, 3 error",
+  "llm_calls": 0,
+  "tokens": 0
+ },
+ {
+  "name": "triage",
+  "role": "Finds the failure boundary with follow-ups",
+  "model": "Qwen/Qwen2.5-32B-Instruct",
+  "state": "done",
+  "last_message": "Boundary: gap >= 1 s approved twice",
+  "llm_calls": 1,
+  "tokens": 2416
+ },
+ {
+  "name": "reporter",
+  "role": "Files the GitHub issue and release check (templated, no LLM)",
+  "model": null,
+  "state": "done",
+  "last_message": "Issue #12 filed; commit status pending",
+  "llm_calls": 0,
+  "tokens": 0
+ },
+ {
+  "name": "rl",
+  "role": "Explores for bugs with a learned policy",
+  "model": null,
+  "state": "idle",
+  "last_message": "",
+  "llm_calls": 0,
+  "tokens": 0
+ }
+]

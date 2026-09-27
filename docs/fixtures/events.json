@@ -1,0 +1,523 @@
+[
+ {
+  "ts": "2026-09-27T16:02:12Z",
+  "agent": "system",
+  "kind": "info",
+  "message": "Run created by tester; 4 rules, bounds: max $1,000.00, MTIs 0100/0200/0400",
+  "data": {
+   "phase": "plan"
+  },
+  "seq": 1
+ },
+ {
+  "ts": "2026-09-27T16:02:20Z",
+  "agent": "planner",
+  "kind": "info",
+  "message": "Plan ready: 4 rules, 10 states to cover",
+  "data": {
+   "phase": "plan"
+  },
+  "seq": 7
+ },
+ {
+  "ts": "2026-09-27T16:02:35Z",
+  "agent": "generator",
+  "kind": "info",
+  "message": "Wrote 10 test cases; all within bounds",
+  "data": {
+   "phase": "plan"
+  },
+  "seq": 13
+ },
+ {
+  "ts": "2026-09-27T16:02:37Z",
+  "agent": "system",
+  "kind": "info",
+  "message": "Waiting for human approval",
+  "data": {
+   "phase": "plan"
+  },
+  "seq": 16
+ },
+ {
+  "ts": "2026-09-27T16:03:23Z",
+  "agent": "executor",
+  "kind": "info",
+  "message": "Split 2,012 cases into 8 batches of up to 256",
+  "data": {
+   "phase": "run"
+  },
+  "seq": 21
+ },
+ {
+  "ts": "2026-09-27T16:03:25Z",
+  "agent": "executor",
+  "kind": "progress",
+  "message": "Sandbox sbx-3f2a00 started (gVisor runsc, network none)",
+  "data": {
+   "sandbox_id": "sbx-3f2a00",
+   "phase": "run"
+  },
+  "seq": 23
+ },
+ {
+  "ts": "2026-09-27T16:03:31Z",
+  "agent": "executor",
+  "kind": "finding",
+  "message": "New switch approved a duplicate $250.00 payment (case_dup_250): old 94, new 00",
+  "data": {
+   "case_id": "case_dup_250",
+   "old_code": "94",
+   "new_code": "00",
+   "balance_delta_cents": {
+    "old_a": {
+     "4111111111111111": -25000
+    },
+    "old_b": {
+     "4111111111111111": -25000
+    },
+    "new": {
+     "4111111111111111": -50000
+    }
+   },
+   "phase": "run"
+  },
+  "seq": 25
+ },
+ {
+  "ts": "2026-09-27T16:03:35Z",
+  "agent": "executor",
+  "kind": "progress",
+  "message": "Batch 1/8 done; sandbox sbx-3f2a00 destroyed",
+  "data": {
+   "batch": 1,
+   "done": 256,
+   "phase": "run"
+  },
+  "seq": 28
+ },
+ {
+  "ts": "2026-09-27T16:03:29Z",
+  "agent": "executor",
+  "kind": "progress",
+  "message": "Batch 1/8: 256 of 2,012 executed, 1 regressions so far",
+  "data": {
+   "done": 256,
+   "regression": 1,
+   "phase": "run"
+  },
+  "seq": 24
+ },
+ {
+  "ts": "2026-09-27T16:03:39Z",
+  "agent": "executor",
+  "kind": "progress",
+  "message": "Sandbox sbx-81c001 started (gVisor runsc, network none)",
+  "data": {
+   "sandbox_id": "sbx-81c001",
+   "phase": "run"
+  },
+  "seq": 29
+ },
+ {
+  "ts": "2026-09-27T16:03:49Z",
+  "agent": "executor",
+  "kind": "progress",
+  "message": "Batch 2/8 done; sandbox sbx-81c001 destroyed",
+  "data": {
+   "batch": 2,
+   "done": 512,
+   "phase": "run"
+  },
+  "seq": 31
+ },
+ {
+  "ts": "2026-09-27T16:03:43Z",
+  "agent": "executor",
+  "kind": "progress",
+  "message": "Batch 2/8: 512 of 2,012 executed, 6 regressions so far",
+  "data": {
+   "done": 512,
+   "regression": 6,
+   "phase": "run"
+  },
+  "seq": 30
+ },
+ {
+  "ts": "2026-09-27T16:03:53Z",
+  "agent": "executor",
+  "kind": "progress",
+  "message": "Sandbox sbx-5d1702 started (gVisor runsc, network none)",
+  "data": {
+   "sandbox_id": "sbx-5d1702",
+   "phase": "run"
+  },
+  "seq": 32
+ },
+ {
+  "ts": "2026-09-27T16:04:03Z",
+  "agent": "executor",
+  "kind": "progress",
+  "message": "Batch 3/8 done; sandbox sbx-5d1702 destroyed",
+  "data": {
+   "batch": 3,
+   "done": 768,
+   "phase": "run"
+  },
+  "seq": 34
+ },
+ {
+  "ts": "2026-09-27T16:03:57Z",
+  "agent": "executor",
+  "kind": "progress",
+  "message": "Batch 3/8: 768 of 2,012 executed, 11 regressions so far",
+  "data": {
+   "done": 768,
+   "regression": 11,
+   "phase": "run"
+  },
+  "seq": 33
+ },
+ {
+  "ts": "2026-09-27T16:04:07Z",
+  "agent": "executor",
+  "kind": "progress",
+  "message": "Sandbox sbx-c94e03 started (gVisor runsc, network none)",
+  "data": {
+   "sandbox_id": "sbx-c94e03",
+   "phase": "run"
+  },
+  "seq": 35
+ },
+ {
+  "ts": "2026-09-27T16:04:17Z",
+  "agent": "executor",
+  "kind": "progress",
+  "message": "Batch 4/8 done; sandbox sbx-c94e03 destroyed",
+  "data": {
+   "batch": 4,
+   "done": 1024,
+   "phase": "run"
+  },
+  "seq": 37
+ },
+ {
+  "ts": "2026-09-27T16:04:11Z",
+  "agent": "executor",
+  "kind": "progress",
+  "message": "Batch 4/8: 1,024 of 2,012 executed, 16 regressions so far",
+  "data": {
+   "done": 1024,
+   "regression": 16,
+   "phase": "run"
+  },
+  "seq": 36
+ },
+ {
+  "ts": "2026-09-27T16:04:21Z",
+  "agent": "executor",
+  "kind": "progress",
+  "message": "Sandbox sbx-0b6a04 started (gVisor runsc, network none)",
+  "data": {
+   "sandbox_id": "sbx-0b6a04",
+   "phase": "run"
+  },
+  "seq": 38
+ },
+ {
+  "ts": "2026-09-27T16:04:31Z",
+  "agent": "executor",
+  "kind": "progress",
+  "message": "Batch 5/8 done; sandbox sbx-0b6a04 destroyed",
+  "data": {
+   "batch": 5,
+   "done": 1280,
+   "phase": "run"
+  },
+  "seq": 40
+ },
+ {
+  "ts": "2026-09-27T16:04:25Z",
+  "agent": "executor",
+  "kind": "progress",
+  "message": "Batch 5/8: 1,280 of 2,012 executed, 22 regressions so far",
+  "data": {
+   "done": 1280,
+   "regression": 22,
+   "phase": "run"
+  },
+  "seq": 39
+ },
+ {
+  "ts": "2026-09-27T16:04:35Z",
+  "agent": "executor",
+  "kind": "progress",
+  "message": "Sandbox sbx-e27305 started (gVisor runsc, network none)",
+  "data": {
+   "sandbox_id": "sbx-e27305",
+   "phase": "run"
+  },
+  "seq": 41
+ },
+ {
+  "ts": "2026-09-27T16:04:45Z",
+  "agent": "executor",
+  "kind": "progress",
+  "message": "Batch 6/8 done; sandbox sbx-e27305 destroyed",
+  "data": {
+   "batch": 6,
+   "done": 1536,
+   "phase": "run"
+  },
+  "seq": 43
+ },
+ {
+  "ts": "2026-09-27T16:04:39Z",
+  "agent": "executor",
+  "kind": "progress",
+  "message": "Batch 6/8: 1,536 of 2,012 executed, 28 regressions so far",
+  "data": {
+   "done": 1536,
+   "regression": 28,
+   "phase": "run"
+  },
+  "seq": 42
+ },
+ {
+  "ts": "2026-09-27T16:04:49Z",
+  "agent": "executor",
+  "kind": "progress",
+  "message": "Sandbox sbx-49fd06 started (gVisor runsc, network none)",
+  "data": {
+   "sandbox_id": "sbx-49fd06",
+   "phase": "run"
+  },
+  "seq": 44
+ },
+ {
+  "ts": "2026-09-27T16:04:59Z",
+  "agent": "executor",
+  "kind": "progress",
+  "message": "Batch 7/8 done; sandbox sbx-49fd06 destroyed",
+  "data": {
+   "batch": 7,
+   "done": 1792,
+   "phase": "run"
+  },
+  "seq": 46
+ },
+ {
+  "ts": "2026-09-27T16:04:53Z",
+  "agent": "executor",
+  "kind": "progress",
+  "message": "Batch 7/8: 1,792 of 2,012 executed, 35 regressions so far",
+  "data": {
+   "done": 1792,
+   "regression": 35,
+   "phase": "run"
+  },
+  "seq": 45
+ },
+ {
+  "ts": "2026-09-27T16:05:03Z",
+  "agent": "executor",
+  "kind": "progress",
+  "message": "Sandbox sbx-a1c807 started (gVisor runsc, network none)",
+  "data": {
+   "sandbox_id": "sbx-a1c807",
+   "phase": "run"
+  },
+  "seq": 47
+ },
+ {
+  "ts": "2026-09-27T16:05:13Z",
+  "agent": "executor",
+  "kind": "progress",
+  "message": "Batch 8/8 done; sandbox sbx-a1c807 destroyed",
+  "data": {
+   "batch": 8,
+   "done": 2012,
+   "phase": "run"
+  },
+  "seq": 49
+ },
+ {
+  "ts": "2026-09-27T16:05:07Z",
+  "agent": "executor",
+  "kind": "progress",
+  "message": "Batch 8/8: 2,012 of 2,012 executed, 41 regressions so far",
+  "data": {
+   "done": 2012,
+   "regression": 41,
+   "phase": "run"
+  },
+  "seq": 48
+ },
+ {
+  "ts": "2026-09-27T16:05:21Z",
+  "agent": "executor",
+  "kind": "warning",
+  "message": "3 replayed transactions timed out and were marked error",
+  "data": {
+   "phase": "run"
+  },
+  "seq": 50
+ },
+ {
+  "ts": "2026-09-27T16:05:31Z",
+  "agent": "triage",
+  "kind": "info",
+  "message": "Running 8 follow-ups inside approved bounds (auto follow-ups on)",
+  "data": {
+   "phase": "triage"
+  },
+  "seq": 56
+ },
+ {
+  "ts": "2026-09-27T16:05:32Z",
+  "agent": "triage",
+  "kind": "progress",
+  "message": "Follow-up: retry after 0 s -> Old 94, New 94",
+  "data": {
+   "gap_s": 0,
+   "old": "94",
+   "new": "94",
+   "phase": "triage"
+  },
+  "seq": 57
+ },
+ {
+  "ts": "2026-09-27T16:05:33Z",
+  "agent": "triage",
+  "kind": "progress",
+  "message": "Follow-up: retry after 0.5 s -> Old 94, New 94",
+  "data": {
+   "gap_s": 0.5,
+   "old": "94",
+   "new": "94",
+   "phase": "triage"
+  },
+  "seq": 58
+ },
+ {
+  "ts": "2026-09-27T16:05:34Z",
+  "agent": "triage",
+  "kind": "progress",
+  "message": "Follow-up: retry after 1 s -> Old 94, New 00",
+  "data": {
+   "gap_s": 1,
+   "old": "94",
+   "new": "00",
+   "phase": "triage"
+  },
+  "seq": 59
+ },
+ {
+  "ts": "2026-09-27T16:05:35Z",
+  "agent": "triage",
+  "kind": "progress",
+  "message": "Follow-up: retry after 2 s -> Old 94, New 00",
+  "data": {
+   "gap_s": 2,
+   "old": "94",
+   "new": "00",
+   "phase": "triage"
+  },
+  "seq": 60
+ },
+ {
+  "ts": "2026-09-27T16:05:36Z",
+  "agent": "triage",
+  "kind": "progress",
+  "message": "Follow-up: retry after 5 s -> Old 94, New 00",
+  "data": {
+   "gap_s": 5,
+   "old": "94",
+   "new": "00",
+   "phase": "triage"
+  },
+  "seq": 61
+ },
+ {
+  "ts": "2026-09-27T16:05:37Z",
+  "agent": "triage",
+  "kind": "progress",
+  "message": "Follow-up: retry after 30 s -> Old 94, New 00",
+  "data": {
+   "gap_s": 30,
+   "old": "94",
+   "new": "00",
+   "phase": "triage"
+  },
+  "seq": 62
+ },
+ {
+  "ts": "2026-09-27T16:05:38Z",
+  "agent": "triage",
+  "kind": "progress",
+  "message": "Follow-up: retry after 59 s -> Old 94, New 00",
+  "data": {
+   "gap_s": 59,
+   "old": "94",
+   "new": "00",
+   "phase": "triage"
+  },
+  "seq": 63
+ },
+ {
+  "ts": "2026-09-27T16:05:39Z",
+  "agent": "triage",
+  "kind": "progress",
+  "message": "Follow-up: retry after 61 s -> Old 00, New 00",
+  "data": {
+   "gap_s": 61,
+   "old": "00",
+   "new": "00",
+   "phase": "triage"
+  },
+  "seq": 64
+ },
+ {
+  "ts": "2026-09-27T16:05:45Z",
+  "agent": "triage",
+  "kind": "finding",
+  "message": "Boundary found: retries 1 s or more apart are approved by the new switch",
+  "data": {
+   "boundary_s": 1,
+   "phase": "triage"
+  },
+  "seq": 66
+ },
+ {
+  "ts": "2026-09-27T16:05:55Z",
+  "agent": "reporter",
+  "kind": "info",
+  "message": "Filed GitHub issue #12 and set release check to pending",
+  "data": {
+   "issue_url": "https://github.com/switchproof-demo/switchproof/issues/12",
+   "phase": "triage"
+  },
+  "seq": 70
+ },
+ {
+  "ts": "2026-09-27T16:05:57Z",
+  "agent": "system",
+  "kind": "info",
+  "message": "Waiting for release decision",
+  "data": {
+   "phase": "triage"
+  },
+  "seq": 72
+ },
+ {
+  "ts": "2026-09-27T16:09:04Z",
+  "agent": "reporter",
+  "kind": "decision",
+  "message": "GitHub check set to failure; migration blocked",
+  "data": {
+   "status_state": "failure",
+   "phase": "decision"
+  },
+  "seq": 75
+ }
+]
